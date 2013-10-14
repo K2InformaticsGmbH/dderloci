@@ -1,8 +1,10 @@
 -module(dderloci).
 
+-include_lib("imem/include/imem_sql.hrl").
+
 %% API
 -export([
-    prep_sql/2,
+    exec/2,
     inject_rowid/1
 ]).
 
@@ -42,6 +44,44 @@ inject_rowid(Sql) ->
 %io:format(user, "New parse tree ~p~n________________________~n", [_NewPT]),
     NewSql.
 
-prep_sql(Sql, {oci_port, _, _} = Statement) ->
+exec(Sql, {oci_port, _, _} = Connection) ->
     NewSql = inject_rowid(Sql),
-    Statement:prep_sql(NewSql, Statement).
+    Statement = Connection:prep_sql(NewSql),
+    case Statement:exec_stmt() of
+        {ok, Clms} ->
+io:format(user, "{~p,~p} Cols ~p~n", [?MODULE, ?LINE, Clms]),
+            {ok
+            , #stmtResult{ stmtCols = cols_to_rec(Clms)
+                         , rowFun   = fun(R) -> R end
+                         , stmtRef  = Statement
+                         , sortFun  = fun(R) -> R end
+                         , sortSpec = []}
+            };
+        _ ->
+            Statement:close(),
+            Statement1 = Connection:prep_sql(Sql),
+            case Statement1:exec_stmt() of
+                {ok, Clms1} ->
+io:format(user, "{~p,~p} Cols ~p~n", [?MODULE, ?LINE, Clms1]),
+                    {ok
+                    , #stmtResult{ stmtCols = cols_to_rec(Clms1)
+                                 , rowFun   = fun(R) -> R end
+                                 , stmtRef  = Statement1
+                                 , sortFun  = fun(R) -> R end
+                                 , sortSpec = []}
+                    };
+                Error ->
+                    Statement1:close(),
+                    Error
+            end
+    end.
+
+cols_to_rec([]) -> [];
+cols_to_rec([{Alias,Type,Len}|Rest]) ->
+    lists:reverse([
+        #stmtCol{ tag = Alias
+                , alias = Alias
+                , type = Type
+                , len = Len
+                , prec = undefined
+                , readonly = false} | cols_to_rec(Rest)]).
