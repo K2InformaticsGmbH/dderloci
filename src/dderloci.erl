@@ -46,13 +46,18 @@ inject_rowid(Sql) ->
 
 exec(Sql, {oci_port, _, _} = Connection) ->
     NewSql = inject_rowid(Sql),
-    Statement = Connection:prep_sql(NewSql),
+    Statement = Connection:prep_sql(NewSql),    
     case Statement:exec_stmt() of
         {ok, Clms} ->
-io:format(user, "{~p,~p} Cols ~p~n", [?MODULE, ?LINE, Clms]),
+            % ROWID is hidden from columns
+            [_|Columns] = Clms,
+            NewClms = cols_to_rec(Columns),
             {ok
-            , #stmtResult{ stmtCols = cols_to_rec(Clms)
-                         , rowFun   = fun(R) -> R end
+            , #stmtResult{ stmtCols = NewClms
+                         , rowFun   = fun(Row) ->
+                                        [_|NewRow] = lists:reverse(Row),
+                                        translate_datatype(NewRow, NewClms)
+                                      end
                          , stmtRef  = Statement
                          , sortFun  = fun(R) -> R end
                          , sortSpec = []}
@@ -61,11 +66,13 @@ io:format(user, "{~p,~p} Cols ~p~n", [?MODULE, ?LINE, Clms]),
             Statement:close(),
             Statement1 = Connection:prep_sql(Sql),
             case Statement1:exec_stmt() of
-                {ok, Clms1} ->
-io:format(user, "{~p,~p} Cols ~p~n", [?MODULE, ?LINE, Clms1]),
+                {ok, Clms} ->
+                    NewClms = cols_to_rec(Clms),
                     {ok
-                    , #stmtResult{ stmtCols = cols_to_rec(Clms1)
-                                 , rowFun   = fun(R) -> R end
+                    , #stmtResult{ stmtCols = NewClms
+                                 , rowFun   = fun(Row) ->
+                                                translate_datatype(lists:reverse(Row), NewClms)
+                                              end
                                  , stmtRef  = Statement1
                                  , sortFun  = fun(R) -> R end
                                  , sortSpec = []}
@@ -78,10 +85,18 @@ io:format(user, "{~p,~p} Cols ~p~n", [?MODULE, ?LINE, Clms1]),
 
 cols_to_rec([]) -> [];
 cols_to_rec([{Alias,Type,Len}|Rest]) ->
-    lists:reverse([
-        #stmtCol{ tag = Alias
-                , alias = Alias
-                , type = Type
-                , len = Len
-                , prec = undefined
-                , readonly = false} | cols_to_rec(Rest)]).
+    [#stmtCol{ tag = Alias
+             , alias = Alias
+             , type = Type
+             , len = Len
+             , prec = undefined
+             , readonly = false} | cols_to_rec(Rest)].
+
+translate_datatype(Row, Cols) ->
+    [case C#stmtCol.type of
+        date ->
+            << Century:8, Year:8, Month:8, Day:8, Hour:8, Minute:8, Second:8 >> = R,
+            list_to_binary(io_lib:format("~2..0B-~2..0B-~2..0B~2..0B ~2..0B:~2..0B:~2..0B", [Day,Month,Century-100,Year-100,Hour,Minute,Second]));
+        _ -> R
+    end
+    || {C,R} <- lists:zip(Cols, Row)].
