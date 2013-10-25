@@ -15,6 +15,8 @@
 -include_lib("imem/include/imem_sql.hrl").
 
 -define(InitTimeout, 10000).
+-define(NoCommit, 0).
+-define(AutoCommit, 1).
 
 -record(stmt, {columns = [],
                del_rows = [],
@@ -22,7 +24,8 @@
                ins_rows = [],
                del_stmt,
                upd_stmt,
-               ins_stmt}).
+               ins_stmt,
+               connection}).
 
 -record(row, {pos, op, index, values}).
 
@@ -44,25 +47,25 @@ init([TableName, ChangeList, Connection, Columns]) ->
         {error, Error} -> {stop, Error}
     end.
 
-handle_call(execute, _From, #stmt{columns = Columns} = Stmt) ->
-    %% TODO: Add transaction to multiple stmt requests (del, upd, ins).
+handle_call(execute, _From, #stmt{columns = Columns, connection = Connection} = Stmt) ->
     case process_delete(Stmt#stmt.del_stmt, Stmt#stmt.del_rows, Columns) of
         {ok, DeleteChangeList} ->
             case process_update(Stmt#stmt.upd_stmt, Stmt#stmt.upd_rows, Columns) of
                 {ok, UpdateChangeList} ->
                     case process_insert(Stmt#stmt.ins_stmt, Stmt#stmt.ins_rows, Columns) of
                         {ok, InsertChangeList} ->
+                            Connection:commit(),
                             {stop, normal, DeleteChangeList ++ UpdateChangeList ++ InsertChangeList, Stmt};
                         Error ->
-                            %% TODO: Rollback
+                            Connection:rollback(),
                             {stop, normal, Error, Stmt}
                     end;
                 Error ->
-                    %% TODO: Rollback
+                    Connection:rollback(),
                     {stop, normal, Error, Stmt}
             end;
         Error ->
-            %% TODO: Rollback
+            Connection:rollback(),
             {stop, normal, Error, Stmt}
     end.
 
@@ -86,7 +89,7 @@ create_stmts(TableName, Connection, ChangeList, Columns) ->
     {DeleteList, UpdateList, InsertList} = split_changes(ChangeList),
     case create_stmts([{del, DeleteList}, {upd, UpdateList}, {ins, InsertList}], TableName, Connection, Columns, []) of
         {ok, Stmt} ->
-            {ok, Stmt#stmt{del_rows = DeleteList, upd_rows = UpdateList, ins_rows = InsertList}};
+            {ok, Stmt#stmt{del_rows = DeleteList, upd_rows = UpdateList, ins_rows = InsertList, connection = Connection}};
         Error ->
             Error
     end.
@@ -159,9 +162,9 @@ create_stmts([{ins, _InsList} | Rest], TableName, Connection, Columns, ResultStm
 -spec process_delete(term(), list(), list()) -> {ok, list()} | {error, term()}.
 process_delete(undefined, [], _Columns) -> {ok, []};
 process_delete(PrepStmt, Rows, _Columns) ->
-    RowsToUpdate = [list_to_tuple(create_bind_vals([lists:last(Row#row.index)], [#stmtCol{type = 'SQLT_STR'}])) || Row <- Rows],
-    io:format("The rows to update ~p", [RowsToUpdate]),
-    case PrepStmt:exec_stmt(RowsToUpdate) of
+    RowsToDelete = [list_to_tuple(create_bind_vals([lists:last(Row#row.index)], [#stmtCol{type = 'SQLT_STR'}])) || Row <- Rows],
+    io:format("The rows to delete ~p", [RowsToDelete]),
+    case PrepStmt:exec_stmt(RowsToDelete, ?NoCommit) of
         {executed, _NumberRowsUpdated} -> %% TODO: Check if the number is correct...
             ChangedKeys = [{Row#row.pos, {{}}} || Row <- Rows],
             {ok, ChangedKeys};
@@ -174,7 +177,7 @@ process_update(undefined, [], _Columns) -> {ok, []};
 process_update(PrepStmt, Rows, Columns) ->
     RowsToUpdate = [list_to_tuple(create_bind_vals([lists:last(Row#row.index) | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])) || Row <- Rows],
     io:format("The rows to update ~p", [RowsToUpdate]),
-    case PrepStmt:exec_stmt(RowsToUpdate) of
+    case PrepStmt:exec_stmt(RowsToUpdate, ?NoCommit) of
         {executed, _NumberRowsUpdated} -> %% TODO: Check if the number is correct...
             ChangedKeys = [{Row#row.pos, lists:reverse(create_bind_vals([lists:last(Row#row.index) | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns]))} || Row <- Rows],
             {ok, ChangedKeys};
@@ -187,7 +190,7 @@ process_insert(undefined, [], _Columns) -> {ok, []};
 process_insert(PrepStmt, Rows, Columns) ->
     RowsToInsert = [list_to_tuple(create_bind_vals(Row#row.values, Columns)) || Row <- Rows],
     io:format("The rows to insert ~p", [RowsToInsert]),
-    case PrepStmt:exec_stmt(RowsToInsert) of
+    case PrepStmt:exec_stmt(RowsToInsert, ?NoCommit) of
         {executed, _NumberRowsUpdated} -> %% TODO: Check if the number is correct...
             {ok, []};
         {error, {_ErrorCode, ErrorMsg}}->
