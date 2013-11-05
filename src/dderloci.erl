@@ -36,7 +36,7 @@ inject_rowid(Sql) ->
                 )],
             NewArgs = lists:keyreplace(fields, 1, Args, {fields, NewFields}),
             NPT = {select, NewArgs},
-            {list_to_binary(sqlparse:fold(NPT)), NPT, FirstTable};
+            {sqlparse:fold(NPT), NPT, FirstTable};
         _ -> {Sql, PT, <<"">>}
     end,
 %io:format(user, "~n________________________~nSQL ~p~n", [NewSql]),
