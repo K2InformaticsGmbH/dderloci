@@ -18,6 +18,8 @@ inject_rowid(Sql) ->
             NewFields =
                 [list_to_binary(case FirstTable of
                     {as, _, Alias} -> [Alias, ".ROWID"];
+                    {{as, _, Alias}, _} -> [Alias, ".ROWID"];
+                    {Tab, _} -> [Tab, ".ROWID"];
                     Tab -> [Tab, ".ROWID"]
                 end) | lists:flatten([case F of
                                         <<"*">> ->
@@ -25,6 +27,8 @@ inject_rowid(Sql) ->
                                             fun(T, AFields) ->
                                                 case T of
                                                     {as, _, Alias} -> [list_to_binary([Alias,".*"]) | AFields];
+                                                    {{as, _, Alias}, _} -> [list_to_binary([Alias, ".*"]) | AFields];
+                                                    {Tab, _} -> [list_to_binary([Tab, ".*"]) | AFields];
                                                     Tab -> [list_to_binary([Tab,".*"]) | AFields]
                                                 end
                                             end,
@@ -77,7 +81,7 @@ exec({oci_port, _, _} = Connection, Sql) ->
                                                 translate_datatype(lists:reverse(Row), NewClms)
                                               end
                                  , stmtRef  = Statement1
-                                 , sortFun  = fun(_Row) -> {} end
+                                 , sortFun  = fun(_Row) -> io:format("sorting ~p~n", [_Row]), {} end
                                  , sortSpec = []}
                     , TableName};
                 Error ->
