@@ -11,9 +11,8 @@
 ]).
 
 inject_rowid(Sql) ->
-    {ok,{[{PT,_}],_}} = sqlparse:parsetree(Sql),
-    {NewSql, _NewPT, TableName} = case PT of
-        {select, Args} ->
+    {NewSql, TableName} = case sqlparse:parsetree(Sql) of
+        {ok,{[{{select, Args},_}],_}} ->
             {fields, Flds} = lists:keyfind(fields, 1, Args),
             {from, [FirstTable|_]=Forms} = lists:keyfind(from, 1, Args),
             NewFields =
@@ -41,13 +40,9 @@ inject_rowid(Sql) ->
                 )],
             NewArgs = lists:keyreplace(fields, 1, Args, {fields, NewFields}),
             NPT = {select, NewArgs},
-            {sqlparse:fold(NPT), NPT, FirstTable};
-        _ -> {Sql, PT, <<"">>}
+            {sqlparse:fold(NPT), FirstTable};
+        _ -> {Sql, <<"">>}
     end,
-%io:format(user, "~n________________________~nSQL ~p~n", [NewSql]),
-%io:format(user, "Old SQL ~p~n", [Sql]),
-%io:format(user, "Old parse tree ~p~n", [PT]),
-%io:format(user, "New parse tree ~p~n________________________~n", [_NewPT]),
     {TableName, NewSql}.
 
 exec({oci_port, _, _} = Connection, Sql) ->
@@ -71,7 +66,14 @@ exec({oci_port, _, _} = Connection, Sql) ->
                          , sortFun  = SortFun
                          , sortSpec = []}
             , TableName};
-        _ ->
+        {rowids, _} ->
+            Statement:close(),
+            ok;
+        {executed, _} ->
+            Statement:close(),
+            ok;
+        RowIdError ->
+            io:format("The row id select error ~p", [RowIdError]),
             Statement:close(),
             Statement1 = Connection:prep_sql(Sql),
             case Statement1:exec_stmt() of
@@ -94,6 +96,7 @@ exec({oci_port, _, _} = Connection, Sql) ->
 
 filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols) ->
     io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
+
 %    {ok,{[{{select, SelectSections},_}],_}} = sqlparse:parsetree(Sql),
 %    OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
 %    NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
