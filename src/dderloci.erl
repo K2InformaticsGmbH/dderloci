@@ -137,13 +137,15 @@ build_sort_fun(Sql, Clms) ->
     end.
 
 cols_to_rec([]) -> [];
-cols_to_rec([{Alias,Type,Len}|Rest]) ->
+%cols_to_rec([{Alias,'SQLT_NUM',Len,Prec, Scale} | Rest]) -> 
+
+cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest]) ->
     io:format("row received: ~p type ~p~n", [Alias, Type]),
     [#stmtCol{ tag = Alias
              , alias = Alias
              , type = Type
              , len = Len
-             , prec = undefined
+             , prec = Prec
              , readonly = false} | cols_to_rec(Rest)].
 
 translate_datatype(Row, Cols) ->

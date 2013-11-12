@@ -27,7 +27,7 @@
                ins_stmt,
                connection}).
 
--record(row, {id, pos, op, values}).
+-record(row, {index, id, pos, op, values}).
 
 %%% API Implementation
 
@@ -165,7 +165,7 @@ process_delete(PrepStmt, Rows, _Columns) ->
     RowsToDelete = [list_to_tuple(create_bind_vals([Row#row.id], [#stmtCol{type = 'SQLT_STR'}])) || Row <- Rows],
     io:format("The rows to delete ~p", [RowsToDelete]),
     case PrepStmt:exec_stmt(RowsToDelete, ?NoCommit) of
-        {executed, _NumberRowsUpdated} -> %% TODO: Check if the number is correct...
+        {rowids, _RowIds} -> %% TODO: Check if the modified rows are the correct.
             ChangedKeys = [{Row#row.pos, {{}}} || Row <- Rows],
             {ok, ChangedKeys};
         {error, {_ErrorCode, ErrorMsg}}->
@@ -178,7 +178,7 @@ process_update(PrepStmt, Rows, Columns) ->
     RowsToUpdate = [list_to_tuple(create_bind_vals([Row#row.id | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])) || Row <- Rows],
     io:format("The rows to update ~p", [RowsToUpdate]),
     case PrepStmt:exec_stmt(RowsToUpdate, ?NoCommit) of
-        {executed, _NumberRowsUpdated} -> %% TODO: Check if the number is correct...
+        {rowids, _RowIds} -> %% TODO: Check if the modified rows are the correct.
             ChangedKeys = [{Row#row.pos, {list_to_tuple(create_bind_vals([Row#row.id | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} || Row <- Rows],
             {ok, ChangedKeys};
         {error, {_ErrorCode, ErrorMsg}}->
@@ -191,8 +191,11 @@ process_insert(PrepStmt, Rows, Columns) ->
     RowsToInsert = [list_to_tuple(create_bind_vals(Row#row.values, Columns)) || Row <- Rows],
     io:format("The rows to insert ~p", [RowsToInsert]),
     case PrepStmt:exec_stmt(RowsToInsert, ?NoCommit) of
-        {executed, _NumberRowsUpdated} -> %% TODO: Check if the number is correct...
-            {ok, []};
+        {rowids, RowIds} ->
+            case inserted_changed_keys(RowIds, Rows, Columns) of
+                {error, ErrorMsg} -> {error, ErrorMsg};
+                ChangedKeys -> {ok, ChangedKeys}
+            end;
         {error, {_ErrorCode, ErrorMsg}}->
             {error, ErrorMsg}
     end.
@@ -203,9 +206,13 @@ split_changes(ChangeList) ->
 
 split_changes([], Result) -> Result;
 split_changes([ListRow | ChangeList], Result) ->
-    [Pos, Op, {Index , {}} | Values] = ListRow,
-    RowId = element(1, Index),
-    Row = #row{id     = RowId,
+    [Pos, Op, Index | Values] = ListRow,
+    case Index of
+        {Idx, {}} -> RowId = element(1, Idx);
+        _ ->         RowId = undefined
+    end,
+    Row = #row{index  = Index,
+               id     = RowId,
                pos    = Pos,
                op     = Op,
                values = Values},
@@ -258,3 +265,10 @@ dderltime_to_ora(DDerlTime) ->
     Minute = binary_to_integer(MinBin) + 1,
     Second = binary_to_integer(SecBin) + 1,
     <<Century, Year, Month, Day, Hour, Minute, Second>>.
+
+-spec inserted_changed_keys([binary()], [#row{}], list()) -> [tuple()].
+inserted_changed_keys([], [], _) -> [];
+inserted_changed_keys([RowId | RestRowIds], [Row | RestRows], Columns) ->
+    [{Row#row.pos, {list_to_tuple(create_bind_vals([RowId | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} | inserted_changed_keys(RestRowIds, RestRows, Columns)];
+inserted_changed_keys(_, _, _) ->
+    {error, <<"Invalid row keys returned by the oracle driver">>}.
