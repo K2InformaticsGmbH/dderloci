@@ -27,7 +27,7 @@
                ins_stmt,
                connection}).
 
--record(row, {pos, op, index, values}).
+-record(row, {id, pos, op, values}).
 
 %%% API Implementation
 
@@ -162,7 +162,7 @@ create_stmts([{ins, _InsList} | Rest], TableName, Connection, Columns, ResultStm
 -spec process_delete(term(), list(), list()) -> {ok, list()} | {error, term()}.
 process_delete(undefined, [], _Columns) -> {ok, []};
 process_delete(PrepStmt, Rows, _Columns) ->
-    RowsToDelete = [list_to_tuple(create_bind_vals([lists:last(Row#row.index)], [#stmtCol{type = 'SQLT_STR'}])) || Row <- Rows],
+    RowsToDelete = [list_to_tuple(create_bind_vals([Row#row.id], [#stmtCol{type = 'SQLT_STR'}])) || Row <- Rows],
     io:format("The rows to delete ~p", [RowsToDelete]),
     case PrepStmt:exec_stmt(RowsToDelete, ?NoCommit) of
         {executed, _NumberRowsUpdated} -> %% TODO: Check if the number is correct...
@@ -175,11 +175,11 @@ process_delete(PrepStmt, Rows, _Columns) ->
 -spec process_update(term(), list(), list()) -> {ok, list()} | {error, term()}.
 process_update(undefined, [], _Columns) -> {ok, []};
 process_update(PrepStmt, Rows, Columns) ->
-    RowsToUpdate = [list_to_tuple(create_bind_vals([lists:last(Row#row.index) | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])) || Row <- Rows],
+    RowsToUpdate = [list_to_tuple(create_bind_vals([Row#row.id | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])) || Row <- Rows],
     io:format("The rows to update ~p", [RowsToUpdate]),
     case PrepStmt:exec_stmt(RowsToUpdate, ?NoCommit) of
         {executed, _NumberRowsUpdated} -> %% TODO: Check if the number is correct...
-            ChangedKeys = [{Row#row.pos, lists:reverse(create_bind_vals([lists:last(Row#row.index) | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns]))} || Row <- Rows],
+            ChangedKeys = [{Row#row.pos, {list_to_tuple(create_bind_vals([Row#row.id | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} || Row <- Rows],
             {ok, ChangedKeys};
         {error, {_ErrorCode, ErrorMsg}}->
             {error, ErrorMsg}
@@ -203,10 +203,11 @@ split_changes(ChangeList) ->
 
 split_changes([], Result) -> Result;
 split_changes([ListRow | ChangeList], Result) ->
-    [Pos, Op, Index | Values] = ListRow,
-    Row = #row{pos    = Pos,
+    [Pos, Op, {Index , {}} | Values] = ListRow,
+    RowId = element(1, Index),
+    Row = #row{id     = RowId,
+               pos    = Pos,
                op     = Op,
-               index  = Index,
                values = Values},
     NewResult = add_to_split_result(Row, Result),
     split_changes(ChangeList, NewResult).

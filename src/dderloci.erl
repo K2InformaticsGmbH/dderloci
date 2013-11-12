@@ -6,7 +6,8 @@
 -export([
     exec/2,
     inject_rowid/1,
-    edatetime_to_ora/1
+    edatetime_to_ora/1,
+    filter_and_sort/5
 ]).
 
 inject_rowid(Sql) ->
@@ -59,14 +60,15 @@ exec({oci_port, _, _} = Connection, Sql) ->
             io:format("The original columns, ~p~n", [Clms]),
             [_|Columns] = Clms,
             NewClms = cols_to_rec(Columns),
+            SortFun = build_sort_fun(NewSql, NewClms),
             {ok
             , #stmtResult{ stmtCols = NewClms
-                         , rowFun   = fun(Row) ->
-                                        [_|NewRow] = lists:reverse(Row),
+                         , rowFun   = fun({Row, {}}) ->
+                                        [_|NewRow] = tuple_to_list(Row),
                                         translate_datatype(NewRow, NewClms)
                                       end
                          , stmtRef  = Statement
-                         , sortFun  = fun(_Row) -> {} end
+                         , sortFun  = SortFun
                          , sortSpec = []}
             , TableName};
         _ ->
@@ -77,11 +79,11 @@ exec({oci_port, _, _} = Connection, Sql) ->
                     NewClms = cols_to_rec(Clms),
                     {ok
                     , #stmtResult{ stmtCols = NewClms
-                                 , rowFun   = fun(Row) ->
-                                                translate_datatype(lists:reverse(Row), NewClms)
+                                 , rowFun   = fun({Row, {}}) ->
+                                                translate_datatype(tuple_to_list(Row), NewClms)
                                               end
                                  , stmtRef  = Statement1
-                                 , sortFun  = fun(_Row) -> io:format("sorting ~p~n", [_Row]), {} end
+                                 , sortFun  = fun(_Row) -> {} end
                                  , sortSpec = []}
                     , TableName};
                 Error ->
@@ -90,6 +92,49 @@ exec({oci_port, _, _} = Connection, Sql) ->
             end
     end.
 
+filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols) ->
+    io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
+%    {ok,{[{{select, SelectSections},_}],_}} = sqlparse:parsetree(Sql),
+%    OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
+%    NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
+    FullMap = build_full_map(StmtCols),
+    NewSortFun = imem_sql:sort_spec_fun(SortSpec, FullMap, FullMap),
+    io:format("The return to the new sort fun... ~p~n", [NewSortFun]),
+    {ok, Query, NewSortFun}.
+
+build_full_map(Clms) ->
+    [#ddColMap{ tag = list_to_atom([$$|integer_to_list(T)])
+              , name = Alias
+              , alias = Alias
+              , tind = 1
+              , cind = T+1
+              , type = binstr
+              , len = 300
+              , prec = undefined }
+     || {T, #stmtCol{alias = Alias}} <- lists:zip(lists:seq(1,length(Clms)), Clms)].
+
+%   Tables = case lists:keyfind(from, 1, SelectSections) of
+%       {_, TNames} ->  Tabs = [imem_sql:table_qname(T) || T <- TNames],
+%                       [{_,MainTab,_}|_] = Tabs,
+%                       case lists:member(MainTab,[ddSize|?DataTypes]) of
+%                           true ->     ?ClientError({"Virtual table can only be joined", MainTab});
+%                           false ->    Tabs
+%                       end;
+%       TError ->       ?ClientError({"Invalid from in select structure", TError})
+%   end,
+%   imem_sql:column_map(Tables,[]);
+
+build_sort_fun(Sql, Clms) ->
+    case sqlparse:parsetree(Sql) of
+        {ok,{[{{select, SelectSections},_}],_}} ->
+            FullMap = build_full_map(Clms),
+            io:format("The full map: ~p~n~n", [FullMap]),
+            Res = imem_sql:build_sort_fun(SelectSections, FullMap),
+            io:format("The result of build_sort_fun ~p~n~n", [Res]),
+            Res;
+        _ ->
+            fun(_Row) -> {} end
+    end.
 
 cols_to_rec([]) -> [];
 cols_to_rec([{Alias,Type,Len}|Rest]) ->
