@@ -127,17 +127,23 @@ build_full_map(Clms) ->
 %   end,
 %   imem_sql:column_map(Tables,[]);
 
-build_sort_fun(Sql, Clms) ->
-    case sqlparse:parsetree(Sql) of
-        {ok,{[{{select, SelectSections},_}],_}} ->
-            FullMap = build_full_map(Clms),
-            io:format("The full map: ~p~n~n", [FullMap]),
-            Res = imem_sql:build_sort_fun(SelectSections, FullMap),
-            io:format("The result of build_sort_fun ~p~n~n", [Res]),
-            Res;
-        _ ->
-            fun(_Row) -> {} end
-    end.
+build_sort_fun(_Sql, _Clms) ->
+    fun(_Row) -> {} end.
+%   case sqlparse:parsetree(Sql) of
+%       {ok,{[{{select, SelectSections},_}],_}} ->
+%           FullMap = build_full_map(Clms),
+%           io:format("The full map: ~p~n~n", [FullMap]),
+%           try imem_sql:build_sort_fun(SelectSections, FullMap) of
+%               Res ->
+%                   io:format("The result of build_sort_fun ~p~n~n", [Res]),
+%                   Res
+%           catch Class:Error ->
+%                   io:format("Error building the sort fun ~p:~p", [Class, Error]),
+%                   fun(_Row) -> {} end
+%           end;
+%       _ ->
+%           fun(_Row) -> {} end
+%   end.
 
 cols_to_rec([]) -> [];
 %cols_to_rec([{Alias,'SQLT_NUM',Len,Prec, Scale} | Rest]) -> 
