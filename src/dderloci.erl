@@ -7,11 +7,14 @@
     exec/2,
     inject_rowid/1,
     edatetime_to_ora/1,
-    filter_and_sort/5
+    filter_and_sort/6
 ]).
 
+-record(qry, {parse_tree}).
+
+-spec inject_rowid(binary()) -> {binary(), binary()}.
 inject_rowid(Sql) ->
-    {NewSql, TableName} = case sqlparse:parsetree(Sql) of
+    case sqlparse:parsetree(Sql) of
         {ok,{[{{select, Args},_}],_}} ->
             {fields, Flds} = lists:keyfind(fields, 1, Args),
             {from, [FirstTable|_]=Forms} = lists:keyfind(from, 1, Args),
@@ -40,10 +43,9 @@ inject_rowid(Sql) ->
                 )],
             NewArgs = lists:keyreplace(fields, 1, Args, {fields, NewFields}),
             NPT = {select, NewArgs},
-            {sqlparse:fold(NPT), FirstTable};
-        _ -> {Sql, <<"">>}
-    end,
-    {TableName, NewSql}.
+            {FirstTable, sqlparse:fold(NPT)};
+        _ -> {<<"">>, Sql}
+    end.
 
 exec({oci_port, _, _} = Connection, Sql) ->
     %% For now only the first table is counted.
@@ -65,7 +67,8 @@ exec({oci_port, _, _} = Connection, Sql) ->
                          , stmtRef  = Statement
                          , sortFun  = SortFun
                          , sortSpec = []}
-            , TableName};
+            , TableName
+            , true};
         {rowids, _} ->
             Statement:close(),
             ok;
@@ -87,30 +90,32 @@ exec({oci_port, _, _} = Connection, Sql) ->
                                  , stmtRef  = Statement1
                                  , sortFun  = fun(_Row) -> {} end
                                  , sortSpec = []}
-                    , TableName};
+                    , TableName
+                    , false};
                 Error ->
                     Statement1:close(),
                     Error
             end
     end.
 
-filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols) ->
+filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
     io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
-
 %    {ok,{[{{select, SelectSections},_}],_}} = sqlparse:parsetree(Sql),
 %    OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
 %    NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
-    FullMap = build_full_map(StmtCols),
+    FullMap = build_full_map(StmtCols, ContainRowId),
     NewSortFun = imem_sql:sort_spec_fun(SortSpec, FullMap, FullMap),
     io:format("The return to the new sort fun... ~p~n", [NewSortFun]),
     {ok, Query, NewSortFun}.
 
-build_full_map(Clms) ->
+build_full_map(Clms, true) -> build_full_map(Clms, 1);
+build_full_map(Clms, false) -> build_full_map(Clms, 0);
+build_full_map(Clms, RowIdOffset) ->
     [#ddColMap{ tag = list_to_atom([$$|integer_to_list(T)])
               , name = Alias
               , alias = Alias
               , tind = 1
-              , cind = T+1
+              , cind = T+RowIdOffset
               , type = binstr
               , len = 300
               , prec = undefined }
