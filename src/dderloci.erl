@@ -43,32 +43,43 @@ inject_rowid(Sql) ->
                 )],
             NewArgs = lists:keyreplace(fields, 1, Args, {fields, NewFields}),
             NPT = {select, NewArgs},
-            {FirstTable, sqlparse:fold(NPT)};
-        _ -> {<<"">>, Sql}
+            {FirstTable, sqlparse:fold(NPT), true};
+        _ -> {<<"">>, Sql, false}
     end.
 
 exec({oci_port, _, _} = Connection, Sql) ->
     %% For now only the first table is counted.
-    {TableName, NewSql} = inject_rowid(Sql),
+    {TableName, NewSql, ContainRowId} = inject_rowid(Sql),
     Statement = Connection:prep_sql(NewSql),
     case Statement:exec_stmt() of
         {ok, Clms} ->
             % ROWID is hidden from columns
             io:format("The original columns, ~p~n", [Clms]),
-            [_|Columns] = Clms,
+            if
+                ContainRowId ->
+                    [_|Columns] = Clms;
+                true ->
+                    Columns = Clms
+            end,
             NewClms = cols_to_rec(Columns),
             SortFun = build_sort_fun(NewSql, NewClms),
             {ok
             , #stmtResult{ stmtCols = NewClms
-                         , rowFun   = fun({Row, {}}) ->
-                                        [_|NewRow] = tuple_to_list(Row),
-                                        translate_datatype(NewRow, NewClms)
-                                      end
+                         , rowFun   =
+                               fun({Row, {}}) ->
+                                       if
+                                           ContainRowId ->
+                                               [_|NewRow] = tuple_to_list(Row),
+                                               translate_datatype(NewRow, NewClms);
+                                           true ->
+                                               translate_datatype(tuple_to_list(Row), NewClms)
+                                       end
+                               end
                          , stmtRef  = Statement
                          , sortFun  = SortFun
                          , sortSpec = []}
             , TableName
-            , true};
+            , ContainRowId};
         {rowids, _} ->
             Statement:close(),
             ok;
@@ -150,9 +161,8 @@ build_sort_fun(_Sql, _Clms) ->
 %           fun(_Row) -> {} end
 %   end.
 
+-spec cols_to_rec([tuple()]) -> [#stmtCol{}].
 cols_to_rec([]) -> [];
-%cols_to_rec([{Alias,'SQLT_NUM',Len,Prec, Scale} | Rest]) -> 
-
 cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest]) ->
     io:format("row received: ~p type ~p~n", [Alias, Type]),
     [#stmtCol{ tag = Alias
