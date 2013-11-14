@@ -43,7 +43,13 @@ inject_rowid(Sql) ->
                 )],
             NewArgs = lists:keyreplace(fields, 1, Args, {fields, NewFields}),
             NPT = {select, NewArgs},
-            {FirstTable, sqlparse:fold(NPT), true};
+            case sqlparse:fold(NPT) of
+                {error, Reason} ->
+                    io:format("Error trying to fold the query with rowid, reason: ~n**********~n~p~n**********", [Reason]),
+                    {FirstTable, Sql, false};
+                NewSql ->
+                    {FirstTable, NewSql, true}
+            end;
         _ -> {<<"">>, Sql, false}
     end.
 
@@ -108,6 +114,30 @@ exec({oci_port, _, _} = Connection, Sql) ->
                     Error
             end
     end.
+
+%%% Model how imem gets the new filter and sort results %%%%
+%       NewSortFun = imem_sql:sort_spec_fun(SortSpec, FullMaps, ColMaps),
+%       %?Debug("NewSortFun ~p~n", [NewSortFun]),
+%       OrderBy = imem_sql:sort_spec_order(SortSpec, FullMaps, ColMaps),
+%       %?Debug("OrderBy ~p~n", [OrderBy]),
+%       Filter =  imem_sql:filter_spec_where(FilterSpec, ColMaps, WhereTree),
+%       %?Debug("Filter ~p~n", [Filter]),
+%       Cols1 = case Cols0 of
+%           [] ->   lists:seq(1,length(ColMaps));
+%           _ ->    Cols0
+%       end,
+%       AllFields = imem_sql:column_map_items(ColMaps, ptree),
+%       % ?Debug("AllFields ~p~n", [AllFields]),
+%       NewFields =  [lists:nth(N,AllFields) || N <- Cols1],
+%       % ?Debug("NewFields ~p~n", [NewFields]),
+%       NewSections0 = lists:keyreplace('fields', 1, SelectSections, {'fields',NewFields}),
+%       NewSections1 = lists:keyreplace('where', 1, NewSections0, {'where',Filter}),
+%       %?Debug("NewSections1 ~p~n", [NewSections1]),
+%       NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
+%       %?Debug("NewSections2 ~p~n", [NewSections2]),
+%       NewSql = sqlparse:fold({select,NewSections2}),     % sql_box:flat_from_pt({select,NewSections2}),
+%       %?Debug("NewSql ~p~n", [NewSql]),
+%       {ok, NewSql, NewSortFun}
 
 filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
     io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
