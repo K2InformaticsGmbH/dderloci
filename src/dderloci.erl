@@ -207,6 +207,9 @@ translate_datatype(Row, Cols) ->
         'SQLT_DAT' ->
             << Century:8, Year:8, Month:8, Day:8, Hour:8, Minute:8, Second:8 >> = R,
             list_to_binary(io_lib:format("~2..0B-~2..0B-~2..0B~2..0B ~2..0B:~2..0B:~2..0B", [Day,Month,Century-100,Year-100,Hour-1,Minute-1,Second-1]));
+        'SQLT_NUM' ->
+             {Mantissa, Exponent} = dderloci_utils:oranumber_decode(R),
+             imem_datatype:decimal_to_io(Mantissa, Exponent);
         _ -> R
     end
     || {C,R} <- lists:zip(Cols, Row)].
