@@ -48,25 +48,30 @@ init([TableName, ChangeList, Connection, Columns]) ->
     end.
 
 handle_call(execute, _From, #stmt{columns = Columns, connection = Connection} = Stmt) ->
-    case process_delete(Stmt#stmt.del_stmt, Stmt#stmt.del_rows, Columns) of
-        {ok, DeleteChangeList} ->
-            case process_update(Stmt#stmt.upd_stmt, Stmt#stmt.upd_rows, Columns) of
-                {ok, UpdateChangeList} ->
-                    case process_insert(Stmt#stmt.ins_stmt, Stmt#stmt.ins_rows, Columns) of
-                        {ok, InsertChangeList} ->
-                            Connection:commit(),
-                            {stop, normal, DeleteChangeList ++ UpdateChangeList ++ InsertChangeList, Stmt};
-                        Error ->
-                            Connection:rollback(),
-                            {stop, normal, Error, Stmt}
-                    end;
-                Error ->
-                    Connection:rollback(),
-                    {stop, normal, Error, Stmt}
-            end;
-        Error ->
+    try
+        case process_delete(Stmt#stmt.del_stmt, Stmt#stmt.del_rows, Columns) of
+            {ok, DeleteChangeList} ->
+                case process_update(Stmt#stmt.upd_stmt, Stmt#stmt.upd_rows, Columns) of
+                    {ok, UpdateChangeList} ->
+                        case process_insert(Stmt#stmt.ins_stmt, Stmt#stmt.ins_rows, Columns) of
+                            {ok, InsertChangeList} ->
+                                Connection:commit(),
+                                {stop, normal, DeleteChangeList ++ UpdateChangeList ++ InsertChangeList, Stmt};
+                            Error ->
+                                Connection:rollback(),
+                                {stop, normal, Error, Stmt}
+                        end;
+                    Error ->
+                        Connection:rollback(),
+                        {stop, normal, Error, Stmt}
+                end;
+            Error ->
+                Connection:rollback(),
+                {stop, normal, Error, Stmt}
+        end
+    catch _Class:Error2 ->
             Connection:rollback(),
-            {stop, normal, Error, Stmt}
+            {stop, normal, {error, Error2}, Stmt}
     end.
 
 handle_cast(_Ignored, State) ->
