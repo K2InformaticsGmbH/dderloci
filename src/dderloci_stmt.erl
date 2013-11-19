@@ -179,7 +179,7 @@ process_update(PrepStmt, Rows, Columns) ->
     io:format("The rows to update ~p", [RowsToUpdate]),
     case PrepStmt:exec_stmt(RowsToUpdate, ?NoCommit) of
         {rowids, _RowIds} -> %% TODO: Check if the modified rows are the correct.
-            ChangedKeys = [{Row#row.pos, {list_to_tuple(create_bind_vals([Row#row.id | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} || Row <- Rows],
+            ChangedKeys = [{Row#row.pos, {list_to_tuple(create_changedkey_vals([Row#row.id | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} || Row <- Rows],
             {ok, ChangedKeys};
         {error, {_ErrorCode, ErrorMsg}}->
             {error, ErrorMsg}
@@ -240,16 +240,33 @@ create_ins_columns([#stmtCol{} = Col | Rest]) -> [Col#stmtCol.tag, ", ", create_
 create_ins_vars([#stmtCol{} = Col]) -> [":", Col#stmtCol.tag];
 create_ins_vars([#stmtCol{} = Col | Rest]) -> [":", Col#stmtCol.tag, ", ", create_ins_vars(Rest)].
 
+create_changedkey_vals([], _Cols) -> [];
+create_changedkey_vals([<<>> | Rest], [_Col | RestCols]) ->
+    [<<>> | create_changedkey_vals(Rest, RestCols)];
+create_changedkey_vals([Value | Rest], [Col | RestCols]) ->
+    case Col#stmtCol.type of
+        'SQLT_DAT' ->
+            [dderloci_utils:dderltime_to_ora(Value) | create_changedkey_vals(Rest, RestCols)];
+        'SQLT_NUM' ->
+            <<_SizeNumber:8, Number/binary>> = dderloci_utils:oranumber_encode(Value),
+            [Number | create_changedkey_vals(Rest, RestCols)];
+        _ ->
+            [Value | create_changedkey_vals(Rest, RestCols)]
+    end.
+
 create_bind_vals([], _Cols) -> [];
 create_bind_vals([Value | Rest], [Col | RestCols]) ->
     case Col#stmtCol.type of
         'SQLT_DAT' ->
             [dderloci_utils:dderltime_to_ora(Value) | create_bind_vals(Rest, RestCols)];
+        'SQLT_NUM' ->
+            [dderloci_utils:oranumber_encode(Value) | create_bind_vals(Rest, RestCols)];
         _ ->
             [Value | create_bind_vals(Rest, RestCols)]
     end.
 
-bind_types_map('SQLT_NUM') -> 'SQLT_STR';
+%% There is no really support for this types at the moment so use string to send the data...
+bind_types_map('SQLT_NUM') -> 'SQLT_VNU';
 bind_types_map('SQLT_INT') -> 'SQLT_STR';
 bind_types_map('SQLT_FLT') -> 'SQLT_STR';
 bind_types_map(Type) -> Type.
@@ -257,6 +274,6 @@ bind_types_map(Type) -> Type.
 -spec inserted_changed_keys([binary()], [#row{}], list()) -> [tuple()].
 inserted_changed_keys([], [], _) -> [];
 inserted_changed_keys([RowId | RestRowIds], [Row | RestRows], Columns) ->
-    [{Row#row.pos, {list_to_tuple(create_bind_vals([RowId | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} | inserted_changed_keys(RestRowIds, RestRows, Columns)];
+    [{Row#row.pos, {list_to_tuple(create_changedkey_vals([RowId | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} | inserted_changed_keys(RestRowIds, RestRows, Columns)];
 inserted_changed_keys(_, _, _) ->
     {error, <<"Invalid row keys returned by the oracle driver">>}.
