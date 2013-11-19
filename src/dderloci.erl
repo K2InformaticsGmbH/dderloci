@@ -193,8 +193,16 @@ build_sort_fun(_Sql, _Clms) ->
 
 -spec cols_to_rec([tuple()]) -> [#stmtCol{}].
 cols_to_rec([]) -> [];
+cols_to_rec([{Alias,'SQLT_NUM',_Len,Prec,Scale}|Rest]) ->
+    io:format("column: ~p type SQLT_NUM~n", [Alias]),
+    [#stmtCol{ tag = Alias
+             , alias = Alias
+             , type = 'SQLT_NUM'
+             , len = Prec
+             , prec = Scale
+             , readonly = false} | cols_to_rec(Rest)];
 cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest]) ->
-    io:format("row received: ~p type ~p~n", [Alias, Type]),
+    io:format("column: ~p type ~p~n", [Alias, Type]),
     [#stmtCol{ tag = Alias
              , alias = Alias
              , type = Type
@@ -202,17 +210,20 @@ cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest]) ->
              , prec = Prec
              , readonly = false} | cols_to_rec(Rest)].
 
-translate_datatype(Row, Cols) ->
-    [case C#stmtCol.type of
-        'SQLT_DAT' ->
-            << Century:8, Year:8, Month:8, Day:8, Hour:8, Minute:8, Second:8 >> = R,
-            list_to_binary(io_lib:format("~2..0B-~2..0B-~2..0B~2..0B ~2..0B:~2..0B:~2..0B", [Day,Month,Century-100,Year-100,Hour-1,Minute-1,Second-1]));
-        'SQLT_NUM' ->
-             {Mantissa, Exponent} = dderloci_utils:oranumber_decode(R),
-             imem_datatype:decimal_to_io(Mantissa, Exponent);
-        _ -> R
-    end
-    || {C,R} <- lists:zip(Cols, Row)].
+translate_datatype([], []) -> [];
+translate_datatype([<<>> | RestRow], [#stmtCol{} | RestCols]) ->
+    [<<>> | translate_datatype(RestRow, RestCols)];
+translate_datatype([R | RestRow], [#stmtCol{type = 'SQLT_DAT'} | RestCols]) ->
+    << Century:8, Year:8, Month:8, Day:8, Hour:8, Minute:8, Second:8 >> = R,
+    Date = list_to_binary(io_lib:format("~2..0B-~2..0B-~2..0B~2..0B ~2..0B:~2..0B:~2..0B", [Day,Month,Century-100,Year-100,Hour-1,Minute-1,Second-1])),
+    [Date | translate_datatype(RestRow, RestCols)];
+translate_datatype([R | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
+    SizeNum = size(R),
+    {Mantissa, Exponent} = dderloci_utils:oranumber_decode(<<SizeNum, R/binary>>),
+    Number = imem_datatype:decimal_to_io(Mantissa, Exponent),
+    [Number | translate_datatype(RestRow, RestCols)];
+translate_datatype([R | RestRow], [#stmtCol{} | RestCols]) ->
+    [R | translate_datatype(RestRow, RestCols)].
 
 edatetime_to_ora({Meg,Mcr,Mil} = Now)
     when is_integer(Meg)

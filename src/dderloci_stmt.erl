@@ -244,7 +244,7 @@ create_bind_vals([], _Cols) -> [];
 create_bind_vals([Value | Rest], [Col | RestCols]) ->
     case Col#stmtCol.type of
         'SQLT_DAT' ->
-            [dderltime_to_ora(Value) | create_bind_vals(Rest, RestCols)];
+            [dderloci_utils:dderltime_to_ora(Value) | create_bind_vals(Rest, RestCols)];
         _ ->
             [Value | create_bind_vals(Rest, RestCols)]
     end.
@@ -253,18 +253,6 @@ bind_types_map('SQLT_NUM') -> 'SQLT_STR';
 bind_types_map('SQLT_INT') -> 'SQLT_STR';
 bind_types_map('SQLT_FLT') -> 'SQLT_STR';
 bind_types_map(Type) -> Type.
-
--spec dderltime_to_ora(binary()) -> binary().
-dderltime_to_ora(DDerlTime) ->
-    <<DBin:2/binary, $-, MBin:2/binary, $-, YBin:4/binary, 32, HBin:2/binary, $:, MinBin:2/binary, $:, SecBin:2/binary>> = DDerlTime,
-    Century = (binary_to_integer(YBin) div 100) + 100,
-    Year = (binary_to_integer(YBin) rem 100) + 100,
-    Month = binary_to_integer(MBin),
-    Day = binary_to_integer(DBin),
-    Hour = binary_to_integer(HBin) + 1,
-    Minute = binary_to_integer(MinBin) + 1,
-    Second = binary_to_integer(SecBin) + 1,
-    <<Century, Year, Month, Day, Hour, Minute, Second>>.
 
 -spec inserted_changed_keys([binary()], [#row{}], list()) -> [tuple()].
 inserted_changed_keys([], [], _) -> [];
