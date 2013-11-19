@@ -2,6 +2,7 @@
 
 -export([oranumber_decode/1
         ,oranumber_encode/1
+        ,ora_to_dderltime/1
         ,dderltime_to_ora/1]).
 
 -spec oranumber_decode(binary()) -> {integer(), integer()} | {error, binary()}.
@@ -116,15 +117,18 @@ remove_trailing_zeros(OrigBin) ->
             list_to_binary(LeftRemoved)
     end.
 
+-spec ora_to_dderltime(binary()) -> binary().
+ora_to_dderltime(<< Year:2/little-unit:8, Month:8, Day:8, Hour:8, Minute:8, Second:8, _/binary >>) ->
+    iolist_to_binary(io_lib:format("~2..0B.~2..0B.~4..0B ~2..0B:~2..0B:~2..0B", [Day,Month,Year,Hour,Minute,Second])).
+
 -spec dderltime_to_ora(binary()) -> binary().
 dderltime_to_ora(<<>>) -> <<>>;
 dderltime_to_ora(DDerlTime) ->
-    <<DBin:2/binary, $-, MBin:2/binary, $-, YBin:4/binary, 32, HBin:2/binary, $:, MinBin:2/binary, $:, SecBin:2/binary>> = DDerlTime,
-    Century = (binary_to_integer(YBin) div 100) + 100,
-    Year = (binary_to_integer(YBin) rem 100) + 100,
+    <<DBin:2/binary, $., MBin:2/binary, $., YBin:4/binary, 32, HBin:2/binary, $:, MinBin:2/binary, $:, SecBin:2/binary>> = DDerlTime,
+    Year = binary_to_integer(YBin),
     Month = binary_to_integer(MBin),
     Day = binary_to_integer(DBin),
-    Hour = binary_to_integer(HBin) + 1,
-    Minute = binary_to_integer(MinBin) + 1,
-    Second = binary_to_integer(SecBin) + 1,
-    <<Century, Year, Month, Day, Hour, Minute, Second>>.
+    Hour = binary_to_integer(HBin),
+    Minute = binary_to_integer(MinBin),
+    Second = binary_to_integer(SecBin),
+    <<Year:2/little-unit:8, Month, Day, Hour, Minute, Second>>.
