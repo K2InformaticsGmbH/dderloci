@@ -6,7 +6,6 @@
 -export([
     exec/2,
     inject_rowid/1,
-    edatetime_to_ora/1,
     filter_and_sort/6
 ]).
 
@@ -222,13 +221,3 @@ translate_datatype([R | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
     [Number | translate_datatype(RestRow, RestCols)];
 translate_datatype([R | RestRow], [#stmtCol{} | RestCols]) ->
     [R | translate_datatype(RestRow, RestCols)].
-
-edatetime_to_ora({Meg,Mcr,Mil} = Now)
-    when is_integer(Meg)
-    andalso is_integer(Mcr)
-    andalso is_integer(Mil) ->
-    edatetime_to_ora(calendar:now_to_datetime(Now));
-edatetime_to_ora({{FullYear,Month,Day},{Hour,Minute,Second}}) ->
-    Century = (FullYear div 100) + 100,
-    Year = (FullYear rem 100) + 100,
-    << Century:8, Year:8, Month:8, Day:8, Hour:8, Minute:8, Second:8 >>.

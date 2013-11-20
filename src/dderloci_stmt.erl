@@ -251,7 +251,8 @@ create_changedkey_vals([<<>> | Rest], [_Col | RestCols]) ->
 create_changedkey_vals([Value | Rest], [Col | RestCols]) ->
     case Col#stmtCol.type of
         'SQLT_DAT' ->
-            [dderloci_utils:dderltime_to_ora(Value) | create_changedkey_vals(Rest, RestCols)];
+            ImemDatetime = imem_datatype:io_to_datetime(Value),
+            [dderloci_utils:edatetime_to_ora(ImemDatetime) | create_changedkey_vals(Rest, RestCols)];
         'SQLT_NUM' ->
             <<_SizeNumber:8, Number/binary>> = dderloci_utils:oranumber_encode(Value),
             [Number | create_changedkey_vals(Rest, RestCols)];
@@ -263,15 +264,17 @@ create_bind_vals([], _Cols) -> [];
 create_bind_vals([Value | Rest], [Col | RestCols]) ->
     case Col#stmtCol.type of
         'SQLT_DAT' ->
-            [dderloci_utils:dderltime_to_ora(Value) | create_bind_vals(Rest, RestCols)];
+            ImemDatetime = imem_datatype:io_to_datetime(Value),
+            [dderloci_utils:edatetime_to_ora(ImemDatetime) | create_bind_vals(Rest, RestCols)];
         'SQLT_NUM' ->
             [dderloci_utils:oranumber_encode(Value) | create_bind_vals(Rest, RestCols)];
         _ ->
             [Value | create_bind_vals(Rest, RestCols)]
     end.
 
-%% There is no really support for this types at the moment so use string to send the data...
 bind_types_map('SQLT_NUM') -> 'SQLT_VNU';
+bind_types_map('SQLT_DAT') -> 'SQLT_ODT';
+%% There is no really support for this types at the moment so use string to send the data...
 bind_types_map('SQLT_INT') -> 'SQLT_STR';
 bind_types_map('SQLT_FLT') -> 'SQLT_STR';
 bind_types_map(Type) -> Type.
