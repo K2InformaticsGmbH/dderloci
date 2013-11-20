@@ -261,6 +261,8 @@ create_changedkey_vals([Value | Rest], [Col | RestCols]) ->
     end.
 
 create_bind_vals([], _Cols) -> [];
+create_bind_vals([<<>> | Rest], [Col | RestCols]) ->
+    [<<>> | create_bind_vals(Rest, RestCols)];
 create_bind_vals([Value | Rest], [Col | RestCols]) ->
     case Col#stmtCol.type of
         'SQLT_DAT' ->
