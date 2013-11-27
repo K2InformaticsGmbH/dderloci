@@ -4,7 +4,8 @@
         ,oranumber_encode/1
         ,ora_to_dderltime/1
         ,dderltime_to_ora/1
-        ,edatetime_to_ora/1]).
+        ,edatetime_to_ora/1
+        ,apply_scale/2]).
 
 -spec oranumber_decode(binary()) -> {integer(), integer()} | {error, binary()}.
 oranumber_decode(<<1:8, _/binary>>) -> {0, 0};
@@ -70,14 +71,11 @@ normalize_mantissa(Mantissa, _Rest) -> Mantissa.
 
 -spec split_binary_number(binary()) -> {integer(), integer()}.
 split_binary_number(NumberBin) ->
-    io:format("split the number :o~n"),
     case remove_trailing_zeros(NumberBin) of
         {negative, CleanNumber} ->
-            io:format("negative number :o ~p~n", [CleanNumber]),
             {Mantissa, Exponent} = parts_to_integer(binary:split(CleanNumber, [<<".">>], [])),
             {Mantissa * -1, Exponent};
         CleanNumber ->
-            io:format("clean number :o ~p~n", [CleanNumber]),
             parts_to_integer(binary:split(CleanNumber, [<<".">>], []))
     end.
 
@@ -142,3 +140,75 @@ edatetime_to_ora({Meg,Mcr,Mil} = Now)
     edatetime_to_ora(calendar:now_to_datetime(Now));
 edatetime_to_ora({{Year,Month,Day},{Hour,Minute,Second}}) ->
     <<Year:16, Month, Day, Hour, Minute, Second, 0>>.
+
+-spec apply_scale(binary(), integer()) -> binary().
+apply_scale(Value, Scale) ->
+    case remove_trailing_zeros(Value) of
+        {negative, CleanNumber} ->
+            CleanNumber,
+            case apply_scale_clean(binary:split(CleanNumber, [<<".">>], []), Scale) of
+                <<"0">> -> <<"0">>;
+                ResultPos -> <<$-, ResultPos/binary>>
+            end;
+        CleanNumber ->
+            CleanNumber,
+            apply_scale_clean(binary:split(CleanNumber, [<<".">>], []), Scale)
+    end.
+
+-spec apply_scale_clean([binary()], integer()) -> binary().
+apply_scale_clean([<<>>], _Scale) -> <<"0">>;
+apply_scale_clean([<<>>, <<>>], _Scale) -> <<"0">>;
+apply_scale_clean([<<>>, RealPart], Scale) -> apply_scale_clean([<<"0">>, RealPart], Scale);
+apply_scale_clean([IntPart, <<>>], Scale) -> apply_scale_clean([IntPart], Scale);
+apply_scale_clean([IntPart], Scale) when Scale >= 0 -> IntPart;
+apply_scale_clean([IntPart], Scale) ->
+    ScalePos = Scale * -1,
+    Factor = pow_bin(10, ScalePos),
+    CutOff = Factor div 2,
+    ValueAsInteger = binary_to_integer(IntPart),
+    Base = ValueAsInteger div Factor,
+    Remainder = ValueAsInteger rem Factor,
+    if
+        Remainder < CutOff ->
+            integer_to_binary(Base * Factor);
+        true ->
+            integer_to_binary((Base + 1) * Factor)
+    end;
+apply_scale_clean([IntPart, _], Scale) when Scale =< 0 -> apply_scale_clean([IntPart], Scale);
+apply_scale_clean([IntPart, RealPart], Scale) when Scale >= size(RealPart) -> <<IntPart/binary, $., RealPart/binary>>;
+apply_scale_clean([IntPart, RealPart], Scale) ->
+    DigitsToRemove = size(RealPart) - Scale,
+    RealListReversed = lists:reverse(binary_to_list(RealPart)),
+    {ToDiscard, RealFixedR} = lists:split(DigitsToRemove, RealListReversed),
+    RealFixed = lists:reverse(RealFixedR),
+    case lists:last(ToDiscard) < $5 of
+        true ->
+            iolist_to_binary([IntPart, $., RealFixed]);
+        false ->
+            SizeBeforeRound = length(RealFixed),
+            Rounded = integer_to_binary(list_to_integer(RealFixed) + 1),
+            SizeAfterRound = size(Rounded),
+            if
+                SizeAfterRound =:= SizeBeforeRound ->
+                    <<IntPart/binary, $., Rounded/binary>>;
+                SizeAfterRound < SizeBeforeRound ->
+                    ZerosToAdd = SizeBeforeRound - SizeAfterRound,
+                    iolist_to_binary([IntPart, $., lists:duplicate(ZerosToAdd, $0), Rounded]);
+                true ->
+                    integer_to_binary(binary_to_integer(IntPart) + 1)
+            end
+    end.
+
+pow_bin(X, N) ->
+    pow_bin(X, N, 1).
+
+pow_bin(X, N, Acc) when (N rem 2) =:= 0 ->
+    pow_bin(X * X, N div 2, Acc);
+pow_bin(X, N, Acc) ->
+    NewAcc = Acc * X,
+    case N div 2 of
+        0 ->
+            NewAcc;
+        _ ->
+            pow_bin(X * X, N div 2, Acc * X)
+    end.

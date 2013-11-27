@@ -106,4 +106,54 @@ oranumber_encode_negative_real_test_() ->
         ?_assertEqual(<<8, 60, 98, 79, 71, 42, 3, 71, 102>>, dderloci_utils:oranumber_encode(<<"-32230.59983">>))
     ].
 
+apply_scale_positive_test_() ->
+    [
+        ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"0.0">>, 0)),
+        ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"0.33">>, 0)),
+        ?_assertEqual(<<"2">>, dderloci_utils:apply_scale(<<"2.33">>, 0)),
+        ?_assertEqual(<<"2">>, dderloci_utils:apply_scale(<<"2.0">>, 1)),
+        ?_assertEqual(<<"33.8">>, dderloci_utils:apply_scale(<<"33.8">>, 2)),
+        ?_assertEqual(<<"33.8">>, dderloci_utils:apply_scale(<<"33.78">>, 1)),
+        ?_assertEqual(<<"33.78">>, dderloci_utils:apply_scale(<<"33.78">>, 2)),
+        ?_assertEqual(<<"33.78">>, dderloci_utils:apply_scale(<<"33.7800">>, 2)),
+        ?_assertEqual(<<"33.78">>, dderloci_utils:apply_scale(<<"33.7800">>, 4)),
+        ?_assertEqual(<<"0.0036">>, dderloci_utils:apply_scale(<<"0.00355">>, 4)),
+        ?_assertEqual(<<"0.0000485">>, dderloci_utils:apply_scale(<<"0.0000485">>, 10)),
+        ?_assertEqual(<<"99">>, dderloci_utils:apply_scale(<<"98.9999">>, 3)),
+
+        ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"-0.0">>, 0)),
+        ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"-0.33">>, 0)),
+        ?_assertEqual(<<"-2">>, dderloci_utils:apply_scale(<<"-2.33">>, 0)),
+        ?_assertEqual(<<"-2">>, dderloci_utils:apply_scale(<<"-2.0">>, 1)),
+        ?_assertEqual(<<"-33.8">>, dderloci_utils:apply_scale(<<"-33.8">>, 2)),
+        ?_assertEqual(<<"-33.8">>, dderloci_utils:apply_scale(<<"-33.78">>, 1)),
+        ?_assertEqual(<<"-33.78">>, dderloci_utils:apply_scale(<<"-33.78">>, 2)),
+        ?_assertEqual(<<"-33.78">>, dderloci_utils:apply_scale(<<"-33.7800">>, 2)),
+        ?_assertEqual(<<"-33.78">>, dderloci_utils:apply_scale(<<"-33.7800">>, 4)),
+        ?_assertEqual(<<"-0.0036">>, dderloci_utils:apply_scale(<<"-0.00355">>, 4)),
+        ?_assertEqual(<<"-0.0000485">>, dderloci_utils:apply_scale(<<"-0.0000485">>, 10)),
+        ?_assertEqual(<<"-99">>, dderloci_utils:apply_scale(<<"-98.9999">>, 3))
+    ].
+
+apply_scale_negative_test_() ->
+    [
+        ?_assertEqual(<<"50">>, dderloci_utils:apply_scale(<<"50">>, -1)),
+        ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"23">>, -2)),
+        ?_assertEqual(<<"100">>, dderloci_utils:apply_scale(<<"123">>, -2)),
+        ?_assertEqual(<<"1100">>, dderloci_utils:apply_scale(<<"1123">>, -2)),
+        ?_assertEqual(<<"1100">>, dderloci_utils:apply_scale(<<"1100">>, -2)),
+        ?_assertEqual(<<"1200">>, dderloci_utils:apply_scale(<<"1153">>, -2)),
+        ?_assertEqual(<<"1200">>, dderloci_utils:apply_scale(<<"1153.44332">>, -2)),
+        ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"0.00355">>, -2)),
+
+        ?_assertEqual(<<"-50">>, dderloci_utils:apply_scale(<<"-50">>, -1)),
+        ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"-23">>, -2)),
+        ?_assertEqual(<<"-100">>, dderloci_utils:apply_scale(<<"-123">>, -2)),
+        ?_assertEqual(<<"-1100">>, dderloci_utils:apply_scale(<<"-1123">>, -2)),
+        ?_assertEqual(<<"-1100">>, dderloci_utils:apply_scale(<<"-1100">>, -2)),
+        ?_assertEqual(<<"-1200">>, dderloci_utils:apply_scale(<<"-1153">>, -2)),
+        ?_assertEqual(<<"-1200">>, dderloci_utils:apply_scale(<<"-1153.44332">>, -2)),
+        ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"-0.00355">>, -2))
+    ].
+
 -endif.
