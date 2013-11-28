@@ -138,15 +138,43 @@ exec({oci_port, _, _} = Connection, Sql) ->
 %       %?Debug("NewSql ~p~n", [NewSql]),
 %       {ok, NewSql, NewSortFun}
 
+can_expand([<<"*">>], [TableName], _) when is_binary(TableName) -> true;
+can_expand(SelectFields, [TableName], AllFields) when is_binary(TableName) ->
+    LowerSelectFields = [string:to_lower(binary_to_list(X)) || X <- SelectFields, is_binary(X)],
+    LowerAllFields = [string:to_lower(binary_to_list(X)) || X <- AllFields],
+    length(LowerSelectFields) =:= length(LowerAllFields) andalso [] =:= (LowerSelectFields -- LowerAllFields);
+can_expand(_, _, _) -> false.
+
+
 filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
     io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
-%    {ok,{[{{select, SelectSections},_}],_}} = sqlparse:parsetree(Sql),
-%    OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
-%    NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
     FullMap = build_full_map(StmtCols, ContainRowId),
+    case Cols of
+        [] ->   Cols1 = lists:seq(1,length(FullMap));
+        _ ->    Cols1 = Cols
+    end,
+    % AllFields = imem_sql:column_map_items(ColMaps, ptree), %%% This should be the correct way if doing it.
+    AllFields = [C#ddColMap.alias || C <- FullMap],
     NewSortFun = imem_sql:sort_spec_fun(SortSpec, FullMap, FullMap),
     io:format("The return to the new sort fun... ~p~n", [NewSortFun]),
-    {ok, Query, NewSortFun}.
+    case sqlparse:parsetree(Query) of
+        {ok,{[{{select, SelectSections},_}],_}} ->
+            {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
+            {from, Tables} = lists:keyfind(from, 1, SelectSections),
+            case can_expand(Flds, Tables, AllFields) of
+                true ->
+                    NewFields = [lists:nth(N,AllFields) || N <- Cols1],
+                    NewSections0 = lists:keyreplace('fields', 1, SelectSections, {'fields',NewFields}),
+                    % OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
+                    % NewSections1 = lists:keyreplace('order by', 1, NewSections0, {'order by',OrderBy}),
+                    NewSql = sqlparse:fold({select, NewSections0});
+                false ->
+                    NewSql = Query
+            end;
+        _->
+            NewSql = Query
+    end,
+    {ok, NewSql, NewSortFun}.
 
 build_full_map(Clms, true) -> build_full_map(Clms, 1);
 build_full_map(Clms, false) -> build_full_map(Clms, 0);
