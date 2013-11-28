@@ -57,7 +57,7 @@ exec({oci_port, _, _} = Connection, Sql) ->
     {TableName, NewSql, ContainRowId} = inject_rowid(Sql),
     Statement = Connection:prep_sql(NewSql),
     case Statement:exec_stmt() of
-        {ok, Clms} ->
+        {cols, Clms} ->
             % ROWID is hidden from columns
             io:format("The original columns, ~p~n", [Clms]),
             if
@@ -96,7 +96,7 @@ exec({oci_port, _, _} = Connection, Sql) ->
             Statement:close(),
             Statement1 = Connection:prep_sql(Sql),
             case Statement1:exec_stmt() of
-                {ok, Clms} ->
+                {cols, Clms} ->
                     NewClms = cols_to_rec(Clms),
                     {ok
                     , #stmtResult{ stmtCols = NewClms
