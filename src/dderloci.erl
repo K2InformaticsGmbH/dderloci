@@ -10,7 +10,8 @@
     fetch_recs_async/2,
     fetch_close/1,
     filter_and_sort/5,
-    close/1
+    close/1,
+    run_table_cmd/3
 ]).
 
 %% gen_server callbacks
@@ -381,3 +382,22 @@ fix_null([<<0, 0, 0, 0, 0, 0, 0, _/binary>> | RestRow], [#stmtCol{type = 'SQLT_D
     [<<>> | fix_null(RestRow, RestCols)];
 fix_null([Cell | RestRow], [#stmtCol{} | RestCols]) ->
     [Cell | fix_null(RestRow, RestCols)].
+
+-spec run_table_cmd(tuple(), atom(), binary()) -> ok | {error, term()}.
+run_table_cmd({oci_port, _, _} = _Connection, restore_table, _TableName) -> {error, <<"Command not implemented">>};
+run_table_cmd({oci_port, _, _} = _Connection, snapshot_table, _TableName) -> {error, <<"Command not implemented">>};
+run_table_cmd({oci_port, _, _} = Connection, truncate_table, TableName) ->
+    run_table_cmd(Connection, iolist_to_binary([<<"truncate table ">>, TableName]));
+run_table_cmd({oci_port, _, _} = Connection, drop_table, TableName) ->
+    run_table_cmd(Connection, iolist_to_binary([<<"drop table ">>, TableName])).
+
+-spec run_table_cmd(tuple(), binary()) -> ok | {error, term()}.
+run_table_cmd(Connection, SqlCmd) ->
+    Statement = Connection:prep_sql(SqlCmd),
+    case Statement:exec_stmt() of
+        {executed, _} ->
+            Statement:close(),
+            ok;
+        Error ->
+            {error, Error}
+    end.
