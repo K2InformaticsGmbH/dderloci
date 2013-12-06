@@ -1,6 +1,8 @@
 -module(dderloci_stmt).
 -behaviour(gen_server).
 
+-include("dderloci.hrl").
+
 -export([prepare/4,
     execute/1]).
 
@@ -12,9 +14,6 @@
 	terminate/2,
 	code_change/3]).
 
--include_lib("imem/include/imem_sql.hrl").
-
--define(InitTimeout, 10000).
 -define(NoCommit, 0).
 -define(AutoCommit, 1).
 
