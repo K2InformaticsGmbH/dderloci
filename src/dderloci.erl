@@ -6,6 +6,7 @@
 %% API
 -export([
     exec/2,
+    change_password/4,
     add_fsm/2,
     fetch_recs_async/2,
     fetch_close/1,
@@ -50,6 +51,10 @@ exec({oci_port, _, _} = Connection, Sql) ->
             {ok, StmtResult#stmtResult{stmtRef = Pid}, TableName};
         NoSelect -> NoSelect
     end.
+
+-spec change_password(tuple(), binary(), binary(), binary()) -> ok | {error, term()}.
+change_password({oci_port, _, _} = Connection, User, OldPassword, NewPassword) ->
+    run_table_cmd(Connection, iolist_to_binary(["ALTER USER ", User, " IDENTIFIED BY ", NewPassword, " REPLACE ", OldPassword])).
 
 -spec add_fsm(pid(), term()) -> ok.
 add_fsm(Pid, FsmRef) ->
