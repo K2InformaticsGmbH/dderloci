@@ -47,8 +47,9 @@ exec({oci_port, _, _} = Connection, Sql) ->
         {ok, #stmtResult{} = StmtResult, ContainRowId} ->
             %% TODO: Parse the rownum instead of hard coded
             {ok, Pid} = gen_server:start(?MODULE, [SelectSections, StmtResult, ContainRowId, 10000], []),
+            SortSpec = gen_server:call(Pid, build_sort_spec),
             %% Mask the internal stmt ref with our pid.
-            {ok, StmtResult#stmtResult{stmtRef = Pid}, TableName};
+            {ok, StmtResult#stmtResult{stmtRef = Pid, sortSpec = SortSpec}, TableName};
         NoSelect -> NoSelect
     end.
 
@@ -85,6 +86,10 @@ handle_call({filter_and_sort, FilterSpec, SortSpec, Cols, Query}, _From, #qry{st
     %% TODO: improve this to use/update parse tree from the state.
     Res = filter_and_sort(FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId),
     {reply, Res, State};
+handle_call(build_sort_spec, _From, #qry{stmt_result = StmtResult, select_sections = SelectSections, contain_rowid = ContainRowId} = State) ->
+    #stmtResult{stmtCols = StmtCols} = StmtResult,
+    SortSpec = build_sort_spec(SelectSections, StmtCols, ContainRowId),
+    {reply, SortSpec, State};
 handle_call(get_state, _From, State) ->
     {reply, State, State};
 handle_call(close, _From, #qry{stmt_result = StmtResult} = State) ->
@@ -255,6 +260,18 @@ can_expand(SelectFields, [TableName], AllFields) when is_binary(TableName) ->
 can_expand(_, _, _) -> false.
 
 
+build_sort_spec(SelectSections, StmtCols, ContainRowId) ->
+    FullMap = build_full_map(StmtCols, ContainRowId),
+    AllFields = [C#ddColMap.alias || C <- FullMap],
+    {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
+    {from, Tables} = lists:keyfind(from, 1, SelectSections),
+    case can_expand(Flds, Tables, AllFields) of
+        true ->
+            imem_sql:build_sort_spec(SelectSections, FullMap, FullMap);
+        _ ->
+            []
+    end.
+
 filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
     io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
     FullMap = build_full_map(StmtCols, ContainRowId),
@@ -274,9 +291,9 @@ filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
                 true ->
                     NewFields = [lists:nth(N,AllFields) || N <- Cols1],
                     NewSections0 = lists:keyreplace('fields', 1, SelectSections, {'fields',NewFields}),
-                    % OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
-                    % NewSections1 = lists:keyreplace('order by', 1, NewSections0, {'order by',OrderBy}),
-                    NewSql = sqlparse:fold({select, NewSections0});
+                    OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
+                    NewSections1 = lists:keyreplace('order by', 1, NewSections0, {'order by',OrderBy}),
+                    NewSql = sqlparse:fold({select, NewSections1});
                 false ->
                     NewSql = Query
             end;
@@ -289,7 +306,7 @@ build_full_map(Clms, true) -> build_full_map(Clms, 1);
 build_full_map(Clms, false) -> build_full_map(Clms, 0);
 build_full_map(Clms, RowIdOffset) ->
     [#ddColMap{ tag = list_to_atom([$$|integer_to_list(T)])
-              , name = Alias
+              , name = binary_to_atom(Alias, utf8)
               , alias = Alias
               , tind = 1
               , cind = T+RowIdOffset
