@@ -10,7 +10,7 @@
     add_fsm/2,
     fetch_recs_async/2,
     fetch_close/1,
-    filter_and_sort/5,
+    filter_and_sort/6,
     close/1,
     run_table_cmd/3
 ]).
@@ -69,9 +69,9 @@ fetch_recs_async(Pid, Opts) ->
 fetch_close(Pid) ->
     gen_server:cast(Pid, fetch_close).
 
--spec filter_and_sort(pid(), list(), list(), list(), binary()) -> {ok, binary(), fun()}.
-filter_and_sort(Pid, FilterSpec, SortSpec, Cols, Query) ->
-    gen_server:call(Pid, {filter_and_sort, FilterSpec, SortSpec, Cols, Query}).
+-spec filter_and_sort(pid(), tuple(), list(), list(), list(), binary()) -> {ok, binary(), fun()}.
+filter_and_sort(Pid, Connection, FilterSpec, SortSpec, Cols, Query) ->
+    gen_server:call(Pid, {filter_and_sort, Connection, FilterSpec, SortSpec, Cols, Query}).
 
 -spec close(pid()) -> term().
 close(Pid) ->
@@ -81,10 +81,10 @@ close(Pid) ->
 init([SelectSections, StmtResult, ContainRowId, MaxRowCount]) ->
     {ok, #qry{select_sections = SelectSections, stmt_result = StmtResult, contain_rowid = ContainRowId, max_rowcount = MaxRowCount}}.
 
-handle_call({filter_and_sort, FilterSpec, SortSpec, Cols, Query}, _From, #qry{stmt_result = StmtResult, contain_rowid = ContainRowId} = State) ->
+handle_call({filter_and_sort, Connection, FilterSpec, SortSpec, Cols, Query}, _From, #qry{stmt_result = StmtResult, contain_rowid = ContainRowId} = State) ->
     #stmtResult{stmtCols = StmtCols} = StmtResult,
     %% TODO: improve this to use/update parse tree from the state.
-    Res = filter_and_sort(FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId),
+    Res = filter_and_sort(Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId),
     {reply, Res, State};
 handle_call(build_sort_spec, _From, #qry{stmt_result = StmtResult, select_sections = SelectSections, contain_rowid = ContainRowId} = State) ->
     #stmtResult{stmtCols = StmtCols} = StmtResult,
@@ -252,7 +252,7 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
             end
     end.
 
-can_expand([<<"*">>], [TableName], _) when is_binary(TableName) -> true;
+can_expand([<<"*">>], _, _) -> true;
 can_expand(SelectFields, [TableName], AllFields) when is_binary(TableName) ->
     LowerSelectFields = [string:to_lower(binary_to_list(X)) || X <- SelectFields, is_binary(X)],
     LowerAllFields = [string:to_lower(binary_to_list(X)) || X <- AllFields],
@@ -268,11 +268,11 @@ build_sort_spec(SelectSections, StmtCols, ContainRowId) ->
     case can_expand(Flds, Tables, AllFields) of
         true ->
             imem_sql:build_sort_spec(SelectSections, FullMap, FullMap);
-        _ ->
+         _ ->
             []
     end.
 
-filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
+filter_and_sort(Connection, _FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
     io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
     FullMap = build_full_map(StmtCols, ContainRowId),
     case Cols of
@@ -287,6 +287,8 @@ filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
         {ok,{[{{select, SelectSections},_}],_}} ->
             {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
             {from, Tables} = lists:keyfind(from, 1, SelectSections),
+            NewFieldsTest = expand_fields(Connection, Flds, Tables, AllFields),
+            io:format("The new fields test ~p", [NewFieldsTest]),
             case can_expand(Flds, Tables, AllFields) of
                 true ->
                     NewFields = [lists:nth(N,AllFields) || N <- Cols1],
@@ -301,6 +303,15 @@ filter_and_sort(_FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
             NewSql = Query
     end,
     {ok, NewSql, NewSortFun}.
+
+-spec expand_fields(tuple(), [binary()], [binary()], [binary()]) -> [binary()].
+expand_fields(Connection, [<<"*">>], Tables, _) ->
+    add_table_name([{T, Connection:describe(T, 'OCI_PTYPE_TABLE')} || T <- Tables, is_binary(T)]);
+expand_fields(_, Fields, _, _) -> Fields.
+
+add_table_name([]) -> [];
+add_table_name([{TableName, {ok, FieldsTuple}} | Rest]) ->
+    [iolist_to_binary([TableName, ".", F]) || {F, _Type, _Length} <- FieldsTuple] ++ add_table_name(Rest).
 
 build_full_map(Clms, true) -> build_full_map(Clms, 1);
 build_full_map(Clms, false) -> build_full_map(Clms, 0);
