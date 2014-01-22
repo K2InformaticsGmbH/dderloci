@@ -174,16 +174,16 @@ inject_rowid(Args, Sql) ->
     end.
 
 -spec add_rowid_field(tuple() | binary()) -> binary().
-add_rowid_field(Table) -> qualify_field(Table, ".ROWID").
+add_rowid_field(Table) -> qualify_field(Table, "ROWID").
 
 -spec qualify_field(tuple() | binary(), binary() | list()) -> binary().
 qualify_field(Table, Field) -> iolist_to_binary(add_field(Table, Field)).
 
 -spec add_field(tuple() | binary(), binary() | list()) -> iolist().
-add_field({as, _, Alias}, Field) -> [Alias, Field];
-add_field({{as, _, Alias}, _}, Field) -> [Alias, Field];
-add_field({Tab, _}, Field) -> [Tab, Field];
-add_field(Tab, Field) -> [Tab, Field].
+add_field({as, _, Alias}, Field) -> [Alias, ".", Field];
+add_field({{as, _, Alias}, _}, Field) -> [Alias, ".", Field];
+add_field({Tab, _}, Field) -> [Tab, ".", Field];
+add_field(Tab, Field) -> [Tab, ".", Field].
 
 -spec expand_star(list(), list()) -> list().
 expand_star([<<"*">>], Forms) -> qualify_star(Forms);
@@ -191,7 +191,7 @@ expand_star(Flds, _Forms) -> Flds.
 
 -spec qualify_star(list()) -> list().
 qualify_star([]) -> [];
-qualify_star([Table | Rest]) -> [qualify_field(Table, ".*") | qualify_star(Rest)].
+qualify_star([Table | Rest]) -> [qualify_field(Table, "*") | qualify_star(Rest)].
 
 run_query(Connection, Sql, NewSql, RowIdAdded) ->
     %% For now only the first table is counted.
@@ -259,18 +259,12 @@ can_expand(SelectFields, [TableName], AllFields) when is_binary(TableName) ->
     length(LowerSelectFields) =:= length(LowerAllFields) andalso [] =:= (LowerSelectFields -- LowerAllFields);
 can_expand(_, _, _) -> false.
 
-
 build_sort_spec(SelectSections, StmtCols, ContainRowId) ->
     FullMap = build_full_map(StmtCols, ContainRowId),
     AllFields = [C#ddColMap.alias || C <- FullMap],
     {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
     {from, Tables} = lists:keyfind(from, 1, SelectSections),
-    case can_expand(Flds, Tables, AllFields) of
-        true ->
-            imem_sql:build_sort_spec(SelectSections, FullMap, FullMap);
-         _ ->
-            []
-    end.
+    imem_sql:build_sort_spec(SelectSections, FullMap, FullMap).
 
 filter_and_sort(Connection, _FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
     io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
@@ -292,13 +286,13 @@ filter_and_sort(Connection, _FilterSpec, SortSpec, Cols, Query, StmtCols, Contai
             case can_expand(Flds, Tables, AllFields) of
                 true ->
                     NewFields = [lists:nth(N,AllFields) || N <- Cols1],
-                    NewSections0 = lists:keyreplace('fields', 1, SelectSections, {'fields',NewFields}),
-                    OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
-                    NewSections1 = lists:keyreplace('order by', 1, NewSections0, {'order by',OrderBy}),
-                    NewSql = sqlparse:fold({select, NewSections1});
+                    NewSections0 = lists:keyreplace('fields', 1, SelectSections, {'fields',NewFields});
                 false ->
-                    NewSql = Query
-            end;
+                    NewSections0 = SelectSections
+            end,
+            OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
+            NewSections1 = lists:keyreplace('order by', 1, NewSections0, {'order by',OrderBy}),
+            NewSql = sqlparse:fold({select, NewSections1});
         _->
             NewSql = Query
     end,
