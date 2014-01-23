@@ -261,10 +261,27 @@ can_expand(_, _, _) -> false.
 
 build_sort_spec(SelectSections, StmtCols, ContainRowId) ->
     FullMap = build_full_map(StmtCols, ContainRowId),
-    AllFields = [C#ddColMap.alias || C <- FullMap],
-    {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
-    {from, Tables} = lists:keyfind(from, 1, SelectSections),
-    imem_sql:build_sort_spec(SelectSections, FullMap, FullMap).
+    case lists:keyfind('order by', 1, SelectSections) of
+        {'order by', OrderBy} ->
+            [process_sort_order(ColOrder, FullMap, ContainRowId) || ColOrder <- OrderBy];
+        _ ->
+            []
+    end.
+
+process_sort_order({Name, <<>>}, Map, ContainRowId) ->
+    process_sort_order({Name, <<"asc">>}, Map, ContainRowId);
+process_sort_order(ColOrder, [], _) -> ColOrder;
+process_sort_order({Name, Dir}, [#ddColMap{alias = Alias, cind = Pos} | Rest], ContainRowId) ->
+    Match = string:to_lower(binary_to_list(Name)) =:= string:to_lower(binary_to_list(Alias)),
+    if
+        Match ->
+            if
+                ContainRowId -> NewPos = Pos - 1;
+                true -> NewPos = Pos
+            end,
+            {NewPos, Dir};
+        true -> process_sort_order({Name, Dir}, Rest, ContainRowId)
+    end.
 
 filter_and_sort(Connection, _FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
     io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
@@ -275,14 +292,12 @@ filter_and_sort(Connection, _FilterSpec, SortSpec, Cols, Query, StmtCols, Contai
     end,
     % AllFields = imem_sql:column_map_items(ColMaps, ptree), %%% This should be the correct way if doing it.
     AllFields = [C#ddColMap.alias || C <- FullMap],
-    NewSortFun = imem_sql:sort_spec_fun(SortSpec, FullMap, FullMap),
-    io:format("The return to the new sort fun... ~p~n", [NewSortFun]),
+    SortSpecExplicit = [{Col, Dir} || {Col, Dir} <- SortSpec, is_integer(Col)],
+    NewSortFun = imem_sql:sort_spec_fun(SortSpecExplicit, FullMap, FullMap),
     case sqlparse:parsetree(Query) of
         {ok,{[{{select, SelectSections},_}],_}} ->
             {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
             {from, Tables} = lists:keyfind(from, 1, SelectSections),
-            NewFieldsTest = expand_fields(Connection, Flds, Tables, AllFields),
-            io:format("The new fields test ~p", [NewFieldsTest]),
             case can_expand(Flds, Tables, AllFields) of
                 true ->
                     NewFields = [lists:nth(N,AllFields) || N <- Cols1],
