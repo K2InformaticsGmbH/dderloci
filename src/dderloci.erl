@@ -133,30 +133,6 @@ terminate(_Reason, #qry{stmt_result = #stmtResult{stmtRef = StmtRef}}) -> StmtRe
 code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
 
-%%% Model how imem gets the new filter and sort results %%%%
-%       NewSortFun = imem_sql:sort_spec_fun(SortSpec, FullMaps, ColMaps),
-%       %?Debug("NewSortFun ~p~n", [NewSortFun]),
-%       OrderBy = imem_sql:sort_spec_order(SortSpec, FullMaps, ColMaps),
-%       %?Debug("OrderBy ~p~n", [OrderBy]),
-%       Filter =  imem_sql:filter_spec_where(FilterSpec, ColMaps, WhereTree),
-%       %?Debug("Filter ~p~n", [Filter]),
-%       Cols1 = case Cols0 of
-%           [] ->   lists:seq(1,length(ColMaps));
-%           _ ->    Cols0
-%       end,
-%       AllFields = imem_sql:column_map_items(ColMaps, ptree),
-%       % ?Debug("AllFields ~p~n", [AllFields]),
-%       NewFields =  [lists:nth(N,AllFields) || N <- Cols1],
-%       % ?Debug("NewFields ~p~n", [NewFields]),
-%       NewSections0 = lists:keyreplace('fields', 1, SelectSections, {'fields',NewFields}),
-%       NewSections1 = lists:keyreplace('where', 1, NewSections0, {'where',Filter}),
-%       %?Debug("NewSections1 ~p~n", [NewSections1]),
-%       NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
-%       %?Debug("NewSections2 ~p~n", [NewSections2]),
-%       NewSql = sqlparse:fold({select,NewSections2}),     % sql_box:flat_from_pt({select,NewSections2}),
-%       %?Debug("NewSql ~p~n", [NewSql]),
-%       {ok, NewSql, NewSortFun}
-
 %% Internal functions %%%
 
 -spec inject_rowid(list(), binary()) -> {binary(), binary()}.
@@ -283,8 +259,32 @@ process_sort_order({Name, Dir}, [#ddColMap{alias = Alias, cind = Pos} | Rest], C
         true -> process_sort_order({Name, Dir}, Rest, ContainRowId)
     end.
 
-filter_and_sort(Connection, _FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
-    io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [_FilterSpec, SortSpec, Cols, Query, StmtCols]),
+%%% Model how imem gets the new filter and sort results %%%%
+%       NewSortFun = imem_sql:sort_spec_fun(SortSpec, FullMaps, ColMaps),
+%       %?Debug("NewSortFun ~p~n", [NewSortFun]),
+%       OrderBy = imem_sql:sort_spec_order(SortSpec, FullMaps, ColMaps),
+%       %?Debug("OrderBy ~p~n", [OrderBy]),
+%       Filter =  imem_sql:filter_spec_where(FilterSpec, ColMaps, WhereTree),
+%       %?Debug("Filter ~p~n", [Filter]),
+%       Cols1 = case Cols0 of
+%           [] ->   lists:seq(1,length(ColMaps));
+%           _ ->    Cols0
+%       end,
+%       AllFields = imem_sql:column_map_items(ColMaps, ptree),
+%       % ?Debug("AllFields ~p~n", [AllFields]),
+%       NewFields =  [lists:nth(N,AllFields) || N <- Cols1],
+%       % ?Debug("NewFields ~p~n", [NewFields]),
+%       NewSections0 = lists:keyreplace('fields', 1, SelectSections, {'fields',NewFields}),
+%       NewSections1 = lists:keyreplace('where', 1, NewSections0, {'where',Filter}),
+%       %?Debug("NewSections1 ~p~n", [NewSections1]),
+%       NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
+%       %?Debug("NewSections2 ~p~n", [NewSections2]),
+%       NewSql = sqlparse:fold({select,NewSections2}),     % sql_box:flat_from_pt({select,NewSections2}),
+%       %?Debug("NewSql ~p~n", [NewSql]),
+%       {ok, NewSql, NewSortFun}
+
+filter_and_sort(Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
+    io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [FilterSpec, SortSpec, Cols, Query, StmtCols]),
     FullMap = build_full_map(StmtCols, ContainRowId),
     case Cols of
         [] ->   Cols1 = lists:seq(1,length(FullMap));
@@ -298,6 +298,7 @@ filter_and_sort(Connection, _FilterSpec, SortSpec, Cols, Query, StmtCols, Contai
         {ok,{[{{select, SelectSections},_}],_}} ->
             {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
             {from, Tables} = lists:keyfind(from, 1, SelectSections),
+            {where, WhereTree} = lists:keyfind(where, 1, SelectSections),
             case can_expand(Flds, Tables, AllFields) of
                 true ->
                     NewFields = [lists:nth(N,AllFields) || N <- Cols1],
@@ -305,9 +306,11 @@ filter_and_sort(Connection, _FilterSpec, SortSpec, Cols, Query, StmtCols, Contai
                 false ->
                     NewSections0 = SelectSections
             end,
+            Filter =  imem_sql:filter_spec_where(FilterSpec, FullMap, WhereTree),
+            NewSections1 = lists:keyreplace('where', 1, NewSections0, {'where',Filter}),
             OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
-            NewSections1 = lists:keyreplace('order by', 1, NewSections0, {'order by',OrderBy}),
-            NewSql = sqlparse:fold({select, NewSections1});
+            NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
+            NewSql = sqlparse:fold({select, NewSections2});
         _->
             NewSql = Query
     end,
@@ -348,21 +351,6 @@ build_full_map(Clms, RowIdOffset) ->
 
 build_sort_fun(_Sql, _Clms) ->
     fun(_Row) -> {} end.
-%   case sqlparse:parsetree(Sql) of
-%       {ok,{[{{select, SelectSections},_}],_}} ->
-%           FullMap = build_full_map(Clms),
-%           io:format("The full map: ~p~n~n", [FullMap]),
-%           try imem_sql:build_sort_fun(SelectSections, FullMap) of
-%               Res ->
-%                   io:format("The result of build_sort_fun ~p~n~n", [Res]),
-%                   Res
-%           catch Class:Error ->
-%                   io:format("Error building the sort fun ~p:~p", [Class, Error]),
-%                   fun(_Row) -> {} end
-%           end;
-%       _ ->
-%           fun(_Row) -> {} end
-%   end.
 
 -spec cols_to_rec([tuple()]) -> [#stmtCol{}].
 cols_to_rec([]) -> [];
