@@ -5,7 +5,7 @@
 
 %% API
 -export([
-    exec/2,
+    exec/3,
     change_password/4,
     add_fsm/2,
     fetch_recs_async/2,
@@ -29,11 +29,12 @@
              ,fsm_ref
              ,max_rowcount
              ,pushlock
+             ,contain_rownum
              }).
 
 %% Exported functions
--spec exec(tuple(), binary()) -> ok | {ok, pid()} | {error, term()}.
-exec({oci_port, _, _} = Connection, Sql) ->
+-spec exec(tuple(), binary(), integer()) -> ok | {ok, pid()} | {error, term()}.
+exec({oci_port, _, _} = Connection, Sql, MaxRowCount) ->
     case sqlparse:parsetree(Sql) of
         {ok,{[{{select, SelectSections},_}],_}} ->
             {TableName, NewSql, RowIdAdded} = inject_rowid(SelectSections, Sql);
@@ -45,8 +46,12 @@ exec({oci_port, _, _} = Connection, Sql) ->
     end,
     case run_query(Connection, Sql, NewSql, RowIdAdded) of
         {ok, #stmtResult{} = StmtResult, ContainRowId} ->
-            %% TODO: Parse the rownum instead of hard coded
-            {ok, Pid} = gen_server:start(?MODULE, [SelectSections, StmtResult, ContainRowId, 10000], []),
+            LowerSql = string:to_lower(binary_to_list(Sql)),
+            case string:str(LowerSql, "rownum") of
+                0 -> ContainRowNum = false;
+                _ -> ContainRowNum = true
+            end,
+            {ok, Pid} = gen_server:start(?MODULE, [SelectSections, StmtResult, ContainRowId, MaxRowCount, ContainRowNum], []),
             SortSpec = gen_server:call(Pid, build_sort_spec),
             %% Mask the internal stmt ref with our pid.
             {ok, StmtResult#stmtResult{stmtRef = Pid, sortSpec = SortSpec}, TableName};
@@ -63,7 +68,7 @@ add_fsm(Pid, FsmRef) ->
 
 -spec fetch_recs_async(pid(), list()) -> ok.
 fetch_recs_async(Pid, Opts) ->
-    gen_server:cast(Pid, {fetch_recs_async, lists:member({fetch_mode, push}, Opts), 0}).
+    gen_server:cast(Pid, {fetch_recs_async, lists:member({fetch_mode, push}, Opts)}).
 
 -spec fetch_close(pid()) -> ok.
 fetch_close(Pid) ->
@@ -78,8 +83,13 @@ close(Pid) ->
     gen_server:call(Pid, close).
 
 %% Gen server callbacks
-init([SelectSections, StmtResult, ContainRowId, MaxRowCount]) ->
-    {ok, #qry{select_sections = SelectSections, stmt_result = StmtResult, contain_rowid = ContainRowId, max_rowcount = MaxRowCount}}.
+init([SelectSections, StmtResult, ContainRowId, MaxRowCount, ContainRowNum]) ->
+    {ok, #qry{
+            select_sections = SelectSections,
+            stmt_result = StmtResult,
+            contain_rowid = ContainRowId,
+            max_rowcount = MaxRowCount,
+            contain_rownum = ContainRowNum}}.
 
 handle_call({filter_and_sort, Connection, FilterSpec, SortSpec, Cols, Query}, _From, #qry{stmt_result = StmtResult, contain_rowid = ContainRowId} = State) ->
     #stmtResult{stmtCols = StmtCols} = StmtResult,
@@ -96,26 +106,48 @@ handle_call(close, _From, #qry{stmt_result = StmtResult} = State) ->
     #stmtResult{stmtRef = StmtRef} = StmtResult,
     {stop, normal, StmtRef:close(), State#qry{stmt_result = StmtResult#stmtResult{stmtRef = undefined}}};
 handle_call(Ignored, _From, State) ->
-    io:format("unexpected call ~p~n", [Ignored]),
     {noreply, State}.
 
 handle_cast({add_fsm, FsmRef}, #qry{} = State) -> {noreply, State#qry{fsm_ref = FsmRef}};
 handle_cast(fetch_close, #qry{} = State) -> {noreply, State#qry{pushlock = true}};
-handle_cast({fetch_recs_async, PushMode, NRows}, #qry{fsm_ref = FsmRef, stmt_result = StmtResult} = State) ->
-    #qry{contain_rowid = ContainRowId, max_rowcount = MaxRowCount, pushlock = Pushlock} = State,
+handle_cast({fetch_recs_async, true}, #qry{fsm_ref = FsmRef, max_rowcount = MaxRowCount} = State) ->
+    FsmNRows = FsmRef:get_count(),
+    case FsmNRows rem MaxRowCount of
+        0 -> RowsToRequest = MaxRowCount;
+        Result -> RowsToRequest = MaxRowCount - Result
+    end,
+    gen_server:cast(self(), {fetch_recs_async, 0, RowsToRequest}),
+    {noreply, State};
+handle_cast({fetch_recs_async, false}, #qry{fsm_ref = FsmRef, stmt_result = StmtResult, contain_rowid = ContainRowId} = State) ->
     #stmtResult{stmtRef = StmtRef, stmtCols = Clms} = StmtResult,
     case StmtRef:fetch_rows(?DEFAULT_ROW_SIZE) of
+        {{rows, Rows}, Completed} ->
+            FsmRef:rows({fix_row_format(Rows, Clms, ContainRowId), Completed});
+        {error, Error} ->
+            FsmRef:rows({error, Error})
+    end,
+    {noreply, State};
+handle_cast({fetch_recs_async, NRows, Target}, #qry{fsm_ref = FsmRef, stmt_result = StmtResult, contain_rownum = ContainRowNum} = State) ->
+    #qry{contain_rowid = ContainRowId, pushlock = Pushlock} = State,
+    #stmtResult{stmtRef = StmtRef, stmtCols = Clms} = StmtResult,
+    MissingRows = Target - NRows,
+    if
+        MissingRows > ?DEFAULT_ROW_SIZE ->
+            RowsToFetch = ?DEFAULT_ROW_SIZE;
+        true ->
+            RowsToFetch = MissingRows
+    end,
+    case StmtRef:fetch_rows(RowsToFetch) of
         {{rows, Rows}, Completed} ->
             RowsFixed = fix_row_format(Rows, Clms, ContainRowId),
             NewNRows = NRows + length(RowsFixed),
             if
                 Completed -> FsmRef:rows({RowsFixed, Completed});
-                NewNRows >= MaxRowCount -> FsmRef:rows_limit(NewNRows, RowsFixed);
+                (NewNRows >= Target) andalso (not ContainRowNum) -> FsmRef:rows_limit(NewNRows, RowsFixed);
                 Pushlock -> FsmRef:rows({RowsFixed, Completed});
-                PushMode ->
-                    FsmRef:rows({RowsFixed, Completed}),
-                    gen_server:cast(self(), {fetch_recs_async, PushMode, NewNRows});
-                true -> FsmRef:rows({RowsFixed, Completed})
+                true ->
+                    FsmRef:rows({RowsFixed, false}),
+                    gen_server:cast(self(), {fetch_recs_async, NewNRows, Target})
             end;
         {error, Error} ->
             FsmRef:rows({error, Error})
@@ -175,7 +207,6 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
     case Statement:exec_stmt() of
         {cols, Clms} ->
             % ROWID is hidden from columns
-            io:format("The original columns, ~p~n", [Clms]),
             if
                 RowIdAdded ->
                     [_|Columns] = Clms;
@@ -207,7 +238,6 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
             Statement:close(),
             ok;
         RowIdError ->
-            io:format("The row id select error ~p", [RowIdError]),
             Statement:close(),
             Statement1 = Connection:prep_sql(Sql),
             case Statement1:exec_stmt() of
@@ -284,7 +314,6 @@ process_sort_order({Name, Dir}, [#ddColMap{alias = Alias, cind = Pos} | Rest], C
 %       {ok, NewSql, NewSortFun}
 
 filter_and_sort(Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
-    io:format("The filterspec ~p~n The Sort spec ~p~n the col_order ~p~n the Query ~p~n the fullmap ~p~n", [FilterSpec, SortSpec, Cols, Query, StmtCols]),
     FullMap = build_full_map(StmtCols, ContainRowId),
     case Cols of
         [] ->   Cols1 = lists:seq(1,length(FullMap));
@@ -355,7 +384,6 @@ build_sort_fun(_Sql, _Clms) ->
 -spec cols_to_rec([tuple()]) -> [#stmtCol{}].
 cols_to_rec([]) -> [];
 cols_to_rec([{Alias,'SQLT_NUM',_Len,Prec,Scale}|Rest]) ->
-    io:format("column: ~p type SQLT_NUM~n", [Alias]),
     [#stmtCol{ tag = Alias
              , alias = Alias
              , type = 'SQLT_NUM'
@@ -363,7 +391,6 @@ cols_to_rec([{Alias,'SQLT_NUM',_Len,Prec,Scale}|Rest]) ->
              , prec = Scale
              , readonly = false} | cols_to_rec(Rest)];
 cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest]) ->
-    io:format("column: ~p type ~p~n", [Alias, Type]),
     [#stmtCol{ tag = Alias
              , alias = Alias
              , type = Type
