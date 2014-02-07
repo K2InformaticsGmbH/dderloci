@@ -221,7 +221,7 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
             {ok
             , #stmtResult{ stmtCols = NewClms
                          , rowFun   =
-                               fun({Row, {}}) ->
+                               fun({{}, Row}) ->
                                        if
                                            RowIdAdded ->
                                                [_|NewRow] = tuple_to_list(Row),
@@ -240,19 +240,20 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
         {executed, _} ->
             Statement:close(),
             ok;
-        RowIdError ->
+        _RowIdError ->
             Statement:close(),
             Statement1 = Connection:prep_sql(Sql),
             case Statement1:exec_stmt() of
                 {cols, Clms} ->
                     NewClms = cols_to_rec(Clms),
+                    SortFun = build_sort_fun(Sql, NewClms),
                     {ok
                     , #stmtResult{ stmtCols = NewClms
-                                 , rowFun   = fun({Row, {}}) ->
+                                 , rowFun   = fun({{}, Row}) ->
                                                 translate_datatype(tuple_to_list(Row), NewClms)
                                               end
                                  , stmtRef  = Statement1
-                                 , sortFun  = fun(_Row) -> {} end
+                                 , sortFun  = SortFun
                                  , sortSpec = []}
                     , false};
                 Error ->
@@ -354,7 +355,7 @@ build_full_map(Clms, RowIdOffset) ->
     [#ddColMap{ tag = list_to_atom([$$|integer_to_list(T)])
               , name = binary_to_atom(Alias, utf8)
               , alias = Alias
-              , tind = 1
+              , tind = 2
               , cind = T+RowIdOffset
               , type = binstr
               , len = 300
@@ -420,9 +421,9 @@ fix_row_format([Row | Rest], Columns, ContainRowId) ->
     if
         ContainRowId ->
             [RowId | RestRow] = lists:reverse(Row),
-            [{list_to_tuple([RowId | fix_null(RestRow, Columns)]), {}} | fix_row_format(Rest, Columns, ContainRowId)];
+            [{{}, list_to_tuple([RowId | fix_null(RestRow, Columns)])} | fix_row_format(Rest, Columns, ContainRowId)];
         true ->
-            [{list_to_tuple(fix_null(lists:reverse(Row), Columns)), {}} | fix_row_format(Rest, Columns, ContainRowId)]
+            [{{}, list_to_tuple(fix_null(lists:reverse(Row), Columns))} | fix_row_format(Rest, Columns, ContainRowId)]
     end.
 
 fix_null([], []) -> [];

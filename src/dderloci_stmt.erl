@@ -249,7 +249,7 @@ process_one_update(PrepStmt, FilterRows, FilterColumns, Rows, Columns) ->
         {rowids, RowIds} ->
             case check_rowid(RowIds, Rows) of
                 true->
-                    ChangedKeys = [{Row#row.pos, {list_to_tuple(create_changedkey_vals([Row#row.id | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} || Row <- Rows],
+                    ChangedKeys = [{Row#row.pos, {{}, list_to_tuple(create_changedkey_vals([Row#row.id | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns]))}} || Row <- Rows],
                     {ok, ChangedKeys};
                 false ->
                     io:format("The rowids returned ~p doesn't match the rows to update ~p~n", [RowIds, RowsToUpdate]),
@@ -310,7 +310,7 @@ split_changes([], Result) -> Result;
 split_changes([ListRow | ChangeList], Result) ->
     [Pos, Op, Index | Values] = ListRow,
     case Index of
-        {Idx, {}} -> RowId = element(1, Idx);
+        {{}, Idx} -> RowId = element(1, Idx);
         _ ->         RowId = undefined
     end,
     Row = #row{index  = Index,
@@ -393,7 +393,7 @@ bind_types_map(Type) -> Type.
 -spec inserted_changed_keys([binary()], [#row{}], list()) -> [tuple()].
 inserted_changed_keys([], [], _) -> [];
 inserted_changed_keys([RowId | RestRowIds], [Row | RestRows], Columns) ->
-    [{Row#row.pos, {list_to_tuple(create_changedkey_vals([RowId | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns])), {}}} | inserted_changed_keys(RestRowIds, RestRows, Columns)];
+    [{Row#row.pos, {{}, list_to_tuple(create_changedkey_vals([RowId | Row#row.values], [#stmtCol{type = 'SQLT_STR'} | Columns]))}} | inserted_changed_keys(RestRowIds, RestRows, Columns)];
 inserted_changed_keys(_, _, _) ->
     {error, <<"Invalid row keys returned by the oracle driver">>}.
 
@@ -412,7 +412,7 @@ split_by_columns_mod([#row{} = Row | RestRows], Columns, Result) ->
 
 -spec get_modified_cols(#row{}, [#stmtCol{}]) -> [integer()].
 get_modified_cols(#row{index = Index, values = Values}, Columns) ->
-    {OriginalValuesTuple, {}} = Index,
+    {{}, OriginalValuesTuple} = Index,
     [_RowId | OriginalValues] = tuple_to_list(OriginalValuesTuple),
     %% If we dont have rowid should be read only field.
     LengthOrig = length(OriginalValues),
