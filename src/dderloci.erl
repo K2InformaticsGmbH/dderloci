@@ -8,7 +8,7 @@
     exec/3,
     change_password/4,
     add_fsm/2,
-    fetch_recs_async/2,
+    fetch_recs_async/3,
     fetch_close/1,
     filter_and_sort/6,
     close/1,
@@ -66,13 +66,13 @@ change_password({oci_port, _, _} = Connection, User, OldPassword, NewPassword) -
 add_fsm(Pid, FsmRef) ->
     gen_server:cast(Pid, {add_fsm, FsmRef}).
 
--spec fetch_recs_async(pid(), list()) -> ok.
-fetch_recs_async(Pid, Opts) ->
-    gen_server:cast(Pid, {fetch_recs_async, lists:member({fetch_mode, push}, Opts)}).
+-spec fetch_recs_async(pid(), list(), integer()) -> ok.
+fetch_recs_async(Pid, Opts, Count) ->
+    gen_server:cast(Pid, {fetch_recs_async, lists:member({fetch_mode, push}, Opts), Count}).
 
 -spec fetch_close(pid()) -> ok.
 fetch_close(Pid) ->
-    gen_server:cast(Pid, fetch_close).
+    gen_server:call(Pid, fetch_close).
 
 -spec filter_and_sort(pid(), tuple(), list(), list(), list(), binary()) -> {ok, binary(), fun()}.
 filter_and_sort(Pid, Connection, FilterSpec, SortSpec, Cols, Query) ->
@@ -102,23 +102,27 @@ handle_call(build_sort_spec, _From, #qry{stmt_result = StmtResult, select_sectio
     {reply, SortSpec, State};
 handle_call(get_state, _From, State) ->
     {reply, State, State};
+handle_call(fetch_close, _From, #qry{} = State) ->
+    {reply, ok, State#qry{pushlock = true}};
 handle_call(close, _From, #qry{stmt_result = StmtResult} = State) ->
     #stmtResult{stmtRef = StmtRef} = StmtResult,
     {stop, normal, StmtRef:close(), State#qry{stmt_result = StmtResult#stmtResult{stmtRef = undefined}}};
-handle_call(Ignored, _From, State) ->
+handle_call(_Ignored, _From, State) ->
     {noreply, State}.
 
 handle_cast({add_fsm, FsmRef}, #qry{} = State) -> {noreply, State#qry{fsm_ref = FsmRef}};
-handle_cast(fetch_close, #qry{} = State) -> {noreply, State#qry{pushlock = true}};
-handle_cast({fetch_recs_async, true}, #qry{fsm_ref = FsmRef, max_rowcount = MaxRowCount} = State) ->
-    FsmNRows = FsmRef:get_count(),
+handle_cast({fetch_recs_async, _, _}, #qry{pushlock = true} = State) ->
+    {noreply, State};
+handle_cast({fetch_push, _, _}, #qry{pushlock = true} = State) ->
+    {noreply, State};
+handle_cast({fetch_recs_async, true, FsmNRows}, #qry{max_rowcount = MaxRowCount} = State) ->
     case FsmNRows rem MaxRowCount of
         0 -> RowsToRequest = MaxRowCount;
         Result -> RowsToRequest = MaxRowCount - Result
     end,
-    gen_server:cast(self(), {fetch_recs_async, 0, RowsToRequest}),
+    gen_server:cast(self(), {fetch_push, 0, RowsToRequest}),
     {noreply, State};
-handle_cast({fetch_recs_async, false}, #qry{fsm_ref = FsmRef, stmt_result = StmtResult, contain_rowid = ContainRowId} = State) ->
+handle_cast({fetch_recs_async, false, _}, #qry{fsm_ref = FsmRef, stmt_result = StmtResult, contain_rowid = ContainRowId} = State) ->
     #stmtResult{stmtRef = StmtRef, stmtCols = Clms} = StmtResult,
     case StmtRef:fetch_rows(?DEFAULT_ROW_SIZE) of
         {{rows, Rows}, Completed} ->
@@ -127,8 +131,8 @@ handle_cast({fetch_recs_async, false}, #qry{fsm_ref = FsmRef, stmt_result = Stmt
             FsmRef:rows({error, Error})
     end,
     {noreply, State};
-handle_cast({fetch_recs_async, NRows, Target}, #qry{fsm_ref = FsmRef, stmt_result = StmtResult, contain_rownum = ContainRowNum} = State) ->
-    #qry{contain_rowid = ContainRowId, pushlock = Pushlock} = State,
+handle_cast({fetch_push, NRows, Target}, #qry{fsm_ref = FsmRef, stmt_result = StmtResult} = State) ->
+    #qry{contain_rowid = ContainRowId, contain_rownum = ContainRowNum} = State,
     #stmtResult{stmtRef = StmtRef, stmtCols = Clms} = StmtResult,
     MissingRows = Target - NRows,
     if
@@ -144,10 +148,9 @@ handle_cast({fetch_recs_async, NRows, Target}, #qry{fsm_ref = FsmRef, stmt_resul
             if
                 Completed -> FsmRef:rows({RowsFixed, Completed});
                 (NewNRows >= Target) andalso (not ContainRowNum) -> FsmRef:rows_limit(NewNRows, RowsFixed);
-                Pushlock -> FsmRef:rows({RowsFixed, Completed});
                 true ->
                     FsmRef:rows({RowsFixed, false}),
-                    gen_server:cast(self(), {fetch_recs_async, NewNRows, Target})
+                    gen_server:cast(self(), {fetch_push, NewNRows, Target})
             end;
         {error, Error} ->
             FsmRef:rows({error, Error})
@@ -313,7 +316,7 @@ process_sort_order({Name, Dir}, [#ddColMap{alias = Alias, cind = Pos} | Rest], C
 %       %?Debug("NewSql ~p~n", [NewSql]),
 %       {ok, NewSql, NewSortFun}
 
-filter_and_sort(Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
+filter_and_sort(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
     FullMap = build_full_map(StmtCols, ContainRowId),
     case Cols of
         [] ->   Cols1 = lists:seq(1,length(FullMap));
@@ -344,15 +347,6 @@ filter_and_sort(Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, Contain
             NewSql = Query
     end,
     {ok, NewSql, NewSortFun}.
-
--spec expand_fields(tuple(), [binary()], [binary()], [binary()]) -> [binary()].
-expand_fields(Connection, [<<"*">>], Tables, _) ->
-    add_table_name([{T, Connection:describe(T, 'OCI_PTYPE_TABLE')} || T <- Tables, is_binary(T)]);
-expand_fields(_, Fields, _, _) -> Fields.
-
-add_table_name([]) -> [];
-add_table_name([{TableName, {ok, FieldsTuple}} | Rest]) ->
-    [iolist_to_binary([TableName, ".", F]) || {F, _Type, _Length} <- FieldsTuple] ++ add_table_name(Rest).
 
 build_full_map(Clms, true) -> build_full_map(Clms, 1);
 build_full_map(Clms, false) -> build_full_map(Clms, 0);
