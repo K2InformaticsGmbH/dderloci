@@ -281,7 +281,7 @@ build_sort_spec(SelectSections, StmtCols, ContainRowId) ->
 process_sort_order({Name, <<>>}, Map, ContainRowId) ->
     process_sort_order({Name, <<"asc">>}, Map, ContainRowId);
 process_sort_order(ColOrder, [], _) -> ColOrder;
-process_sort_order({Name, Dir}, [#ddColMap{alias = Alias, cind = Pos} | Rest], ContainRowId) ->
+process_sort_order({Name, Dir}, [#bind{alias = Alias, cind = Pos} | Rest], ContainRowId) ->
     Match = string:to_lower(binary_to_list(Name)) =:= string:to_lower(binary_to_list(Alias)),
     if
         Match ->
@@ -324,7 +324,7 @@ filter_and_sort(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, Contai
         _ ->    Cols1 = Cols
     end,
     % AllFields = imem_sql:column_map_items(ColMaps, ptree), %%% This should be the correct way if doing it.
-    AllFields = [C#ddColMap.alias || C <- FullMap],
+    AllFields = [C#bind.alias || C <- FullMap],
     SortSpecExplicit = [{Col, Dir} || {Col, Dir} <- SortSpec, is_integer(Col)],
     NewSortFun = imem_sql:sort_spec_fun(SortSpecExplicit, FullMap, FullMap),
     case sqlparse:parsetree(Query) of
@@ -352,7 +352,7 @@ filter_and_sort(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, Contai
 build_full_map(Clms, true) -> build_full_map(Clms, 1);
 build_full_map(Clms, false) -> build_full_map(Clms, 0);
 build_full_map(Clms, RowIdOffset) ->
-    [#ddColMap{ tag = list_to_atom([$$|integer_to_list(T)])
+    [#bind{ tag = list_to_atom([$$|integer_to_list(T)])
               , name = binary_to_atom(Alias, utf8)
               , alias = Alias
               , tind = 2
