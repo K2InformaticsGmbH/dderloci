@@ -91,14 +91,14 @@ init([SelectSections, StmtResult, ContainRowId, MaxRowCount, ContainRowNum]) ->
             max_rowcount = MaxRowCount,
             contain_rownum = ContainRowNum}}.
 
-handle_call({filter_and_sort, Connection, FilterSpec, SortSpec, Cols, Query}, _From, #qry{stmt_result = StmtResult, contain_rowid = ContainRowId} = State) ->
+handle_call({filter_and_sort, Connection, FilterSpec, SortSpec, Cols, Query}, _From, #qry{stmt_result = StmtResult} = State) ->
     #stmtResult{stmtCols = StmtCols} = StmtResult,
     %% TODO: improve this to use/update parse tree from the state.
-    Res = filter_and_sort(Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId),
+    Res = filter_and_sort_internal(Connection, FilterSpec, SortSpec, Cols, Query, StmtCols),
     {reply, Res, State};
-handle_call(build_sort_spec, _From, #qry{stmt_result = StmtResult, select_sections = SelectSections, contain_rowid = ContainRowId} = State) ->
+handle_call(build_sort_spec, _From, #qry{stmt_result = StmtResult, select_sections = SelectSections} = State) ->
     #stmtResult{stmtCols = StmtCols} = StmtResult,
-    SortSpec = build_sort_spec(SelectSections, StmtCols, ContainRowId),
+    SortSpec = build_sort_spec(SelectSections, StmtCols),
     {reply, SortSpec, State};
 handle_call(get_state, _From, State) ->
     {reply, State, State};
@@ -174,7 +174,7 @@ code_change(_OldVsn, State, _Extra) ->
 inject_rowid(Args, Sql) ->
     {fields, Flds} = lists:keyfind(fields, 1, Args),
     {from, [FirstTable|_]=Forms} = lists:keyfind(from, 1, Args),
-    NewFields = [add_rowid_field(FirstTable) | expand_star(Flds, Forms)],
+    NewFields = expand_star(Flds, Forms) ++ [add_rowid_field(FirstTable)],
     NewArgs = lists:keyreplace(fields, 1, Args, {fields, NewFields}),
     NPT = {select, NewArgs},
     case sqlparse:fold(NPT) of
@@ -212,7 +212,8 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
             % ROWID is hidden from columns
             if
                 RowIdAdded ->
-                    [_|Columns] = Clms;
+                    [_|ColumnsR] = lists:reverse(Clms),
+                    Columns = lists:reverse(ColumnsR);
                 true ->
                     Columns = Clms
             end,
@@ -224,8 +225,8 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
                                fun({{}, Row}) ->
                                        if
                                            RowIdAdded ->
-                                               [_|NewRow] = tuple_to_list(Row),
-                                               translate_datatype(NewRow, NewClms);
+                                               [_|NewRowR] = lists:reverse(tuple_to_list(Row)),
+                                               translate_datatype(lists:reverse(NewRowR), NewClms);
                                            true ->
                                                translate_datatype(tuple_to_list(Row), NewClms)
                                        end
@@ -269,28 +270,22 @@ can_expand(SelectFields, [TableName], AllFields) when is_binary(TableName) ->
     length(LowerSelectFields) =:= length(LowerAllFields) andalso [] =:= (LowerSelectFields -- LowerAllFields);
 can_expand(_, _, _) -> false.
 
-build_sort_spec(SelectSections, StmtCols, ContainRowId) ->
-    FullMap = build_full_map(StmtCols, ContainRowId),
+build_sort_spec(SelectSections, StmtCols) ->
+    FullMap = build_full_map(StmtCols),
     case lists:keyfind('order by', 1, SelectSections) of
         {'order by', OrderBy} ->
-            [process_sort_order(ColOrder, FullMap, ContainRowId) || ColOrder <- OrderBy];
+            [process_sort_order(ColOrder, FullMap) || ColOrder <- OrderBy];
         _ ->
             []
     end.
 
-process_sort_order({Name, <<>>}, Map, ContainRowId) ->
-    process_sort_order({Name, <<"asc">>}, Map, ContainRowId);
-process_sort_order(ColOrder, [], _) -> ColOrder;
-process_sort_order({Name, Dir}, [#bind{alias = Alias, cind = Pos} | Rest], ContainRowId) ->
-    Match = string:to_lower(binary_to_list(Name)) =:= string:to_lower(binary_to_list(Alias)),
-    if
-        Match ->
-            if
-                ContainRowId -> NewPos = Pos - 1;
-                true -> NewPos = Pos
-            end,
-            {NewPos, Dir};
-        true -> process_sort_order({Name, Dir}, Rest, ContainRowId)
+process_sort_order({Name, <<>>}, Map) ->
+    process_sort_order({Name, <<"asc">>}, Map);
+process_sort_order(ColOrder, []) -> ColOrder;
+process_sort_order({Name, Dir}, [#bind{alias = Alias, cind = Pos} | Rest]) ->
+    case string:to_lower(binary_to_list(Name)) =:= string:to_lower(binary_to_list(Alias)) of
+        true -> {Pos, Dir};
+        false -> process_sort_order({Name, Dir}, Rest)
     end.
 
 %%% Model how imem gets the new filter and sort results %%%%
@@ -317,8 +312,8 @@ process_sort_order({Name, Dir}, [#bind{alias = Alias, cind = Pos} | Rest], Conta
 %       %?Debug("NewSql ~p~n", [NewSql]),
 %       {ok, NewSql, NewSortFun}
 
-filter_and_sort(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, ContainRowId) ->
-    FullMap = build_full_map(StmtCols, ContainRowId),
+filter_and_sort_internal(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCols) ->
+    FullMap = build_full_map(StmtCols),
     case Cols of
         [] ->   Cols1 = lists:seq(1,length(FullMap));
         _ ->    Cols1 = Cols
@@ -349,14 +344,12 @@ filter_and_sort(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCols, Contai
     end,
     {ok, NewSql, NewSortFun}.
 
-build_full_map(Clms, true) -> build_full_map(Clms, 1);
-build_full_map(Clms, false) -> build_full_map(Clms, 0);
-build_full_map(Clms, RowIdOffset) ->
+build_full_map(Clms) ->
     [#bind{ tag = list_to_atom([$$|integer_to_list(T)])
               , name = binary_to_atom(Alias, utf8)
               , alias = Alias
               , tind = 2
-              , cind = T+RowIdOffset
+              , cind = T
               , type = binstr
               , len = 300
               , prec = undefined }
@@ -420,8 +413,8 @@ fix_row_format([Row | Rest], Columns, ContainRowId) ->
     % io_to_db(Item,Old,Type,Len,Prec,Def,false,Val) when is_binary(Val);is_list(Val)
     if
         ContainRowId ->
-            [RowId | RestRow] = lists:reverse(Row),
-            [{{}, list_to_tuple([RowId | fix_null(RestRow, Columns)])} | fix_row_format(Rest, Columns, ContainRowId)];
+            [RowId | RestRow] = Row,
+            [{{}, list_to_tuple(fix_null(lists:reverse(RestRow), Columns) ++ [RowId])} | fix_row_format(Rest, Columns, ContainRowId)];
         true ->
             [{{}, list_to_tuple(fix_null(lists:reverse(Row), Columns))} | fix_row_format(Rest, Columns, ContainRowId)]
     end.
