@@ -321,7 +321,7 @@ filter_and_sort_internal(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCol
     % AllFields = imem_sql:column_map_items(ColMaps, ptree), %%% This should be the correct way if doing it.
     AllFields = [C#bind.alias || C <- FullMap],
     SortSpecExplicit = [{Col, Dir} || {Col, Dir} <- SortSpec, is_integer(Col)],
-    NewSortFun = imem_sql:sort_spec_fun(SortSpecExplicit, FullMap, FullMap),
+    NewSortFun = imem_sql_expr:sort_spec_fun(SortSpecExplicit, FullMap, FullMap),
     case sqlparse:parsetree(Query) of
         {ok,{[{{select, SelectSections},_}],_}} ->
             {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
@@ -334,9 +334,9 @@ filter_and_sort_internal(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCol
                 false ->
                     NewSections0 = SelectSections
             end,
-            Filter =  imem_sql:filter_spec_where(FilterSpec, FullMap, WhereTree),
+            Filter =  imem_sql_expr:filter_spec_where(FilterSpec, FullMap, WhereTree),
             NewSections1 = lists:keyreplace('where', 1, NewSections0, {'where',Filter}),
-            OrderBy = imem_sql:sort_spec_order(SortSpec, FullMap, FullMap),
+            OrderBy = imem_sql_expr:sort_spec_order(SortSpec, FullMap, FullMap),
             NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
             NewSql = sqlparse:fold({select, NewSections2});
         _->
@@ -413,10 +413,10 @@ fix_row_format([Row | Rest], Columns, ContainRowId) ->
     % io_to_db(Item,Old,Type,Len,Prec,Def,false,Val) when is_binary(Val);is_list(Val)
     if
         ContainRowId ->
-            [RowId | RestRow] = Row,
-            [{{}, list_to_tuple(fix_null(lists:reverse(RestRow), Columns) ++ [RowId])} | fix_row_format(Rest, Columns, ContainRowId)];
+            {RestRow, [RowId]} = lists:split(length(Row) - 1, Row),
+            [{{}, list_to_tuple(fix_null(RestRow, Columns) ++ [RowId])} | fix_row_format(Rest, Columns, ContainRowId)];
         true ->
-            [{{}, list_to_tuple(fix_null(lists:reverse(Row), Columns))} | fix_row_format(Rest, Columns, ContainRowId)]
+            [{{}, list_to_tuple(fix_null(Row, Columns))} | fix_row_format(Rest, Columns, ContainRowId)]
     end.
 
 fix_null([], []) -> [];
