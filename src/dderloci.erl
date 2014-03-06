@@ -346,7 +346,7 @@ filter_and_sort_internal(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCol
 
 build_full_map(Clms) ->
     [#bind{ tag = list_to_atom([$$|integer_to_list(T)])
-              , name = binary_to_atom(Alias, utf8)
+              , name = Alias
               , alias = Alias
               , tind = 2
               , cind = T
