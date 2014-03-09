@@ -200,7 +200,7 @@ process_delete(PrepStmt, Rows, _Columns) ->
     RowsToDelete = [list_to_tuple(create_bind_vals([Row#row.id], [#stmtCol{type = 'SQLT_STR'}])) || Row <- Rows],
     case PrepStmt:exec_stmt(RowsToDelete, ?NoCommit) of
         {rowids, _RowIds} -> %% TODO: Check if the modified rows are the correct.
-            ChangedKeys = [{Row#row.pos, {{}}} || Row <- Rows],
+            ChangedKeys = [{Row#row.pos, {{}, {}}} || Row <- Rows],
             {ok, ChangedKeys};
         {error, {_ErrorCode, ErrorMsg}}->
             {error, ErrorMsg}
