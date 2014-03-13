@@ -281,12 +281,15 @@ build_sort_spec(SelectSections, StmtCols) ->
 
 process_sort_order({Name, <<>>}, Map) ->
     process_sort_order({Name, <<"asc">>}, Map);
-process_sort_order(ColOrder, []) -> ColOrder;
-process_sort_order({Name, Dir}, [#bind{alias = Alias, cind = Pos} | Rest]) ->
+process_sort_order({Name, Dir}, []) when is_binary(Name)-> {Name, Dir};
+process_sort_order({Name, Dir}, [#bind{alias = Alias, cind = Pos} | Rest]) when is_binary(Name) ->
     case string:to_lower(binary_to_list(Name)) =:= string:to_lower(binary_to_list(Alias)) of
         true -> {Pos, Dir};
         false -> process_sort_order({Name, Dir}, Rest)
-    end.
+    end;
+process_sort_order({Fun, Dir}, Map) ->
+    process_sort_order({sqlparse:fold(Fun), Dir}, Map).
+
 
 %%% Model how imem gets the new filter and sort results %%%%
 %       NewSortFun = imem_sql:sort_spec_fun(SortSpec, FullMaps, ColMaps),
