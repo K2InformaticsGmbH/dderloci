@@ -32,6 +32,8 @@
              ,contain_rownum
              }).
 
+-define(PREFETCH_SIZE, 250).
+
 %% Exported functions
 -spec exec(tuple(), binary(), integer()) -> ok | {ok, pid()} | {error, term()}.
 exec({oci_port, _, _} = Connection, Sql, MaxRowCount) ->
@@ -226,9 +228,9 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
                                        if
                                            RowIdAdded ->
                                                [_|NewRowR] = lists:reverse(tuple_to_list(Row)),
-                                               translate_datatype(lists:reverse(NewRowR), NewClms);
+                                               translate_datatype(Statement, lists:reverse(NewRowR), NewClms);
                                            true ->
-                                               translate_datatype(tuple_to_list(Row), NewClms)
+                                               translate_datatype(Statement, tuple_to_list(Row), NewClms)
                                        end
                                end
                          , stmtRef  = Statement
@@ -251,7 +253,7 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
                     {ok
                     , #stmtResult{ stmtCols = NewClms
                                  , rowFun   = fun({{}, Row}) ->
-                                                translate_datatype(tuple_to_list(Row), NewClms)
+                                                translate_datatype(Statement, tuple_to_list(Row), NewClms)
                                               end
                                  , stmtRef  = Statement1
                                  , sortFun  = SortFun
@@ -389,18 +391,43 @@ cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest]) ->
              , prec = Prec
              , readonly = false} | cols_to_rec(Rest)].
 
-translate_datatype([], []) -> [];
-translate_datatype([<<>> | RestRow], [#stmtCol{} | RestCols]) ->
-    [<<>> | translate_datatype(RestRow, RestCols)];
-translate_datatype([R | RestRow], [#stmtCol{type = 'SQLT_DAT'} | RestCols]) ->
-    [dderloci_utils:ora_to_dderltime(R) | translate_datatype(RestRow, RestCols)];
-translate_datatype([R | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
+translate_datatype(_Stmt, [], []) -> [];
+translate_datatype(Stmt, [<<>> | RestRow], [#stmtCol{} | RestCols]) ->
+    [<<>> | translate_datatype(Stmt, RestRow, RestCols)];
+translate_datatype(Stmt, [R | RestRow], [#stmtCol{type = 'SQLT_DAT'} | RestCols]) ->
+    [dderloci_utils:ora_to_dderltime(R) | translate_datatype(Stmt, RestRow, RestCols)];
+translate_datatype(Stmt, [R | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
     SizeNum = size(R),
     {Mantissa, Exponent} = dderloci_utils:oranumber_decode(<<SizeNum, R/binary>>),
     Number = imem_datatype:decimal_to_io(Mantissa, Exponent),
-    [Number | translate_datatype(RestRow, RestCols)];
-translate_datatype([R | RestRow], [#stmtCol{} | RestCols]) ->
-    [R | translate_datatype(RestRow, RestCols)].
+    [Number | translate_datatype(Stmt, RestRow, RestCols)];
+translate_datatype(Stmt, [{_Pointer, Size, Path, Name} | RestRow], [#stmtCol{type = 'SQLT_BFILEE'} | RestCols]) ->
+    SizeBin = integer_to_binary(Size),
+    [<<Path/binary, $#, Name/binary, 32, $[, SizeBin/binary, $]>> | translate_datatype(Stmt, RestRow, RestCols)];
+translate_datatype(Stmt, [{Pointer, Size} | RestRow], [#stmtCol{type = 'SQLT_BLOB'} | RestCols]) ->
+    if
+        Size > ?PREFETCH_SIZE ->
+            {lob, Trunc} = Stmt:lob(Pointer, 1, ?PREFETCH_SIZE),
+            SizeBin = integer_to_binary(Size),
+            AsIO = imem_datatype:binary_to_io(Trunc),
+            [<<AsIO/binary, $., $., 32, $[, SizeBin/binary, $]>> | translate_datatype(Stmt, RestRow, RestCols)];
+        true ->
+            {lob, Full} = Stmt:lob(Pointer, 1, Size),
+            AsIO = imem_datatype:binary_to_io(Full),
+            [AsIO | translate_datatype(Stmt, RestRow, RestCols)]
+    end;
+translate_datatype(Stmt, [{Pointer, Size} | RestRow], [#stmtCol{type = 'SQLT_CLOB'} | RestCols]) ->
+    if
+        Size > ?PREFETCH_SIZE ->
+            {lob, Trunc} = Stmt:lob(Pointer, 1, ?PREFETCH_SIZE),
+            SizeBin = integer_to_binary(Size),
+            [<<Trunc/binary, $., $., 32, $[, SizeBin/binary, $]>> | translate_datatype(Stmt, RestRow, RestCols)];
+        true ->
+            {lob, Full} = Stmt:lob(Pointer, 1, Size),
+            [Full | translate_datatype(Stmt, RestRow, RestCols)]
+    end;
+translate_datatype(Stmt, [R | RestRow], [#stmtCol{} | RestCols]) ->
+    [R | translate_datatype(Stmt, RestRow, RestCols)].
 
 -spec fix_row_format([list()], [#stmtCol{}], boolean()) -> [tuple()].
 fix_row_format([], _, _) -> [];
