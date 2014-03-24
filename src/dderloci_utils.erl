@@ -222,4 +222,4 @@ get_params(Sql) ->
             _ -> Ctx
         end
     end,
-    sqlparse:fold(ParseTree,Pred,[]).
+    sqlparse:foldtd(Pred,[],ParseTree).

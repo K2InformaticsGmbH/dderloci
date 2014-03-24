@@ -179,7 +179,7 @@ inject_rowid(Args, Sql) ->
     NewFields = expand_star(Flds, Forms) ++ [add_rowid_field(FirstTable)],
     NewArgs = lists:keyreplace(fields, 1, Args, {fields, NewFields}),
     NPT = {select, NewArgs},
-    case sqlparse:fold(NPT) of
+    case sqlparse:pt_to_string(NPT) of
         {error, _Reason} ->
             {FirstTable, Sql, false};
         NewSql ->
@@ -290,7 +290,7 @@ process_sort_order({Name, Dir}, [#bind{alias = Alias, cind = Pos} | Rest]) when 
         false -> process_sort_order({Name, Dir}, Rest)
     end;
 process_sort_order({Fun, Dir}, Map) ->
-    process_sort_order({sqlparse:fold(Fun), Dir}, Map).
+    process_sort_order({sqlparse:pt_to_string(Fun), Dir}, Map).
 
 
 %%% Model how imem gets the new filter and sort results %%%%
@@ -313,7 +313,7 @@ process_sort_order({Fun, Dir}, Map) ->
 %       %?Debug("NewSections1 ~p~n", [NewSections1]),
 %       NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
 %       %?Debug("NewSections2 ~p~n", [NewSections2]),
-%       NewSql = sqlparse:fold({select,NewSections2}),     % sql_box:flat_from_pt({select,NewSections2}),
+%       NewSql = sqlparse:pt_to_string({select,NewSections2}),     % sql_box:flat_from_pt({select,NewSections2}),
 %       %?Debug("NewSql ~p~n", [NewSql]),
 %       {ok, NewSql, NewSortFun}
 
@@ -343,7 +343,7 @@ filter_and_sort_internal(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCol
             NewSections1 = lists:keyreplace('where', 1, NewSections0, {'where',Filter}),
             OrderBy = imem_sql_expr:sort_spec_order(SortSpec, FullMap, FullMap),
             NewSections2 = lists:keyreplace('order by', 1, NewSections1, {'order by',OrderBy}),
-            NewSql = sqlparse:fold({select, NewSections2});
+            NewSql = sqlparse:pt_to_string({select, NewSections2});
         _->
             NewSql = Query
     end,
