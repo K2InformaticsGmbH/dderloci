@@ -349,16 +349,20 @@ filter_and_sort_internal(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCol
     end,
     {ok, NewSql, NewSortFun}.
 
+-spec to_imem_type(atom()) -> atom().
+to_imem_type('SQLT_NUM') -> number;
+to_imem_type(_) -> binstr.
+
 build_full_map(Clms) ->
     [#bind{ tag = list_to_atom([$$|integer_to_list(T)])
               , name = Alias
               , alias = Alias
               , tind = 2
               , cind = T
-              , type = binstr
+              , type = to_imem_type(OciType)
               , len = 300
               , prec = undefined }
-     || {T, #stmtCol{alias = Alias}} <- lists:zip(lists:seq(1,length(Clms)), Clms)].
+     || {T, #stmtCol{alias = Alias, type = OciType}} <- lists:zip(lists:seq(1,length(Clms)), Clms)].
 
 %   Tables = case lists:keyfind(from, 1, SelectSections) of
 %       {_, TNames} ->  Tabs = [imem_sql:table_qname(T) || T <- TNames],
