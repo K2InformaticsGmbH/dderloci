@@ -215,11 +215,15 @@ pow_bin(X, N, Acc) ->
     end.
 
 get_params(Sql) ->
-    {ok,{[{ParseTree,_}],_}} = sqlparse:parsetree(Sql),
-    Pred = fun(P,Ctx) -> 
-        case P of
-            {param, Param} -> [Param|Ctx];
-            _ -> Ctx
-        end
-    end,
-    sqlparse:foldtd(Pred,[],ParseTree).
+    case sqlparse:parsetree(Sql) of
+        {ok,{[{ParseTree,_}],_}} ->
+            Pred = fun(P,Ctx) ->
+                           case P of
+                               {param, Param} -> [Param|Ctx];
+                               _ -> Ctx
+                           end
+                   end,
+            sqlparse:foldtd(Pred,[],ParseTree);
+        _ ->
+            []
+    end.
