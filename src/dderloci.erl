@@ -430,6 +430,8 @@ translate_datatype(Stmt, [{Pointer, Size} | RestRow], [#stmtCol{type = 'SQLT_CLO
             {lob, Full} = Stmt:lob(Pointer, 1, Size),
             [Full | translate_datatype(Stmt, RestRow, RestCols)]
     end;
+translate_datatype(Stmt, [Raw | RestRow], [#stmtCol{type = 'SQLT_BIN'} | RestCols]) ->
+    [imem_datatype:binary_to_io(Raw) | translate_datatype(Stmt, RestRow, RestCols)];
 translate_datatype(Stmt, [R | RestRow], [#stmtCol{} | RestCols]) ->
     [R | translate_datatype(Stmt, RestRow, RestCols)].
 
