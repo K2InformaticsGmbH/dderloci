@@ -288,6 +288,7 @@ split_changes([], Result) -> Result;
 split_changes([ListRow | ChangeList], Result) ->
     [Pos, Op, Index | Values] = ListRow,
     case Index of
+        {{}, {}}  -> RowId = undefined;
         {{}, Idx} -> RowId = element(tuple_size(Idx), Idx);
         _ ->         RowId = undefined
     end,
@@ -343,6 +344,8 @@ create_changedkey_vals([Value | Rest], [#stmtCol{type = Type, prec = PrecOrig} |
             ValueWithScale = dderloci_utils:apply_scale(Value, PrecFloat),
             <<_SizeNumber:8, Number/binary>> = dderloci_utils:oranumber_encode(ValueWithScale),
             [Number | create_changedkey_vals(Rest, RestCols)];
+        'SQLT_BIN' ->
+            [imem_datatype:binary_to_io(Value) | create_bind_vals(Rest, RestCols)];
         _ ->
             [Value | create_changedkey_vals(Rest, RestCols)]
     end.
@@ -350,13 +353,15 @@ create_changedkey_vals([Value | Rest], [#stmtCol{type = Type, prec = PrecOrig} |
 create_bind_vals([], _Cols) -> [];
 create_bind_vals([<<>> | Rest], [_Col | RestCols]) ->
     [<<>> | create_bind_vals(Rest, RestCols)];
-create_bind_vals([Value | Rest], [Col | RestCols]) ->
-    case Col#stmtCol.type of
+create_bind_vals([Value | Rest], [#stmtCol{type = Type, len = Len} | RestCols]) ->
+    case Type of
         'SQLT_DAT' ->
             ImemDatetime = imem_datatype:io_to_datetime(Value),
             [dderloci_utils:edatetime_to_ora(ImemDatetime) | create_bind_vals(Rest, RestCols)];
         'SQLT_NUM' ->
             [dderloci_utils:oranumber_encode(Value) | create_bind_vals(Rest, RestCols)];
+        'SQLT_BIN' ->
+            [imem_datatype:io_to_binary(Value, Len) | create_bind_vals(Rest, RestCols)];
         _ ->
             [Value | create_bind_vals(Rest, RestCols)]
     end.
