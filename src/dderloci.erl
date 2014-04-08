@@ -208,57 +208,68 @@ qualify_star([Table | Rest]) -> [qualify_field(Table, "*") | qualify_star(Rest)]
 
 run_query(Connection, Sql, NewSql, RowIdAdded) ->
     %% For now only the first table is counted.
-    Statement = Connection:prep_sql(NewSql),
-    case Statement:exec_stmt() of
-        {cols, Clms} ->
-            % ROWID is hidden from columns
-            if
-                RowIdAdded ->
-                    [_|ColumnsR] = lists:reverse(Clms),
-                    Columns = lists:reverse(ColumnsR);
-                true ->
-                    Columns = Clms
-            end,
-            NewClms = cols_to_rec(Columns),
-            SortFun = build_sort_fun(NewSql, NewClms),
-            {ok
-            , #stmtResult{ stmtCols = NewClms
-                         , rowFun   =
-                               fun({{}, Row}) ->
-                                       if
-                                           RowIdAdded ->
-                                               [_|NewRowR] = lists:reverse(tuple_to_list(Row)),
-                                               translate_datatype(Statement, lists:reverse(NewRowR), NewClms);
-                                           true ->
-                                               translate_datatype(Statement, tuple_to_list(Row), NewClms)
-                                       end
-                               end
-                         , stmtRef  = Statement
-                         , sortFun  = SortFun
-                         , sortSpec = []}
-            , RowIdAdded};
-        {rowids, _} ->
-            Statement:close(),
-            ok;
-        {executed, _} ->
-            Statement:close(),
-            ok;
-        _RowIdError ->
-            Statement:close(),
-            Statement1 = Connection:prep_sql(Sql),
+    case Connection:prep_sql(NewSql) of
+        {error, {ErrorId,Msg}} ->
+            case Connection:prep_sql(Sql) of
+                {error, {ErrorId,Msg}} ->
+                    {error, {ErrorId,Msg}};
+                Statement -> result_exec_stmt(Statement:exec_stmt(), Statement, Sql, NewSql, RowIdAdded, Connection)
+            end;
+        Statement ->
+            result_exec_stmt(Statement:exec_stmt(), Statement, Sql, NewSql, RowIdAdded, Connection)
+    end.
+
+result_exec_stmt({cols, Clms}, Statement, _Sql, NewSql, RowIdAdded, _Connection) ->
+    if
+        RowIdAdded -> % ROWID is hidden from columns
+            [_|ColumnsR] = lists:reverse(Clms),
+            Columns = lists:reverse(ColumnsR);
+        true ->
+            Columns = Clms
+    end,
+    NewClms = cols_to_rec(Columns),
+    SortFun = build_sort_fun(NewSql, NewClms),
+    {ok
+     , #stmtResult{ stmtCols = NewClms
+                    , rowFun   =
+                        fun({{}, Row}) ->
+                                if
+                                    RowIdAdded ->
+                                        [_|NewRowR] = lists:reverse(tuple_to_list(Row)),
+                                        translate_datatype(Statement, lists:reverse(NewRowR), NewClms);
+                                    true ->
+                                        translate_datatype(Statement, tuple_to_list(Row), NewClms)
+                                end
+                        end
+                    , stmtRef  = Statement
+                    , sortFun  = SortFun
+                    , sortSpec = []}
+     , RowIdAdded};
+result_exec_stmt({rowids, _}, Statement, _Sql, _NewSql, _RowIdAdded, _Connection) ->
+    Statement:close(),
+    ok;
+result_exec_stmt({executed, _}, Statement, _Sql, _NewSql, _RowIdAdded, _Connection) ->
+    Statement:close(),
+    ok;
+result_exec_stmt(_RowIdError, Statement, Sql, _NewSql, _RowIdAdded, Connection) ->
+    Statement:close(),
+    case Connection:prep_sql(Sql) of
+        {error, {ErrorId,Msg}} ->
+            {error, {ErrorId,Msg}};
+        Statement1 ->
             case Statement1:exec_stmt() of
                 {cols, Clms} ->
                     NewClms = cols_to_rec(Clms),
                     SortFun = build_sort_fun(Sql, NewClms),
                     {ok
-                    , #stmtResult{ stmtCols = NewClms
-                                 , rowFun   = fun({{}, Row}) ->
-                                                translate_datatype(Statement, tuple_to_list(Row), NewClms)
-                                              end
-                                 , stmtRef  = Statement1
-                                 , sortFun  = SortFun
-                                 , sortSpec = []}
-                    , false};
+                     , #stmtResult{ stmtCols = NewClms
+                                    , rowFun   = fun({{}, Row}) ->
+                                                         translate_datatype(Statement, tuple_to_list(Row), NewClms)
+                                                 end
+                                    , stmtRef  = Statement1
+                                    , sortFun  = SortFun
+                                    , sortSpec = []}
+                     , false};
                 Error ->
                     Statement1:close(),
                     Error
