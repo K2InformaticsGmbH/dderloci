@@ -371,9 +371,9 @@ build_full_map(Clms) ->
               , tind = 2
               , cind = T
               , type = to_imem_type(OciType)
-              , len = 300
+              , len = Len
               , prec = undefined }
-     || {T, #stmtCol{alias = Alias, type = OciType}} <- lists:zip(lists:seq(1,length(Clms)), Clms)].
+     || {T, #stmtCol{alias = Alias, type = OciType, len = Len}} <- lists:zip(lists:seq(1,length(Clms)), Clms)].
 
 %   Tables = case lists:keyfind(from, 1, SelectSections) of
 %       {_, TNames} ->  Tabs = [imem_sql:table_qname(T) || T <- TNames],
@@ -391,11 +391,18 @@ build_sort_fun(_Sql, _Clms) ->
 
 -spec cols_to_rec([tuple()]) -> [#stmtCol{}].
 cols_to_rec([]) -> [];
-cols_to_rec([{Alias,'SQLT_NUM',_Len,Prec,Scale}|Rest]) ->
+cols_to_rec([{Alias,'SQLT_NUM',_Len,0,-127}|Rest]) ->
     [#stmtCol{ tag = Alias
              , alias = Alias
              , type = 'SQLT_NUM'
-             , len = Prec
+             , len = undefined
+             , prec = 38
+             , readonly = false} | cols_to_rec(Rest)];
+cols_to_rec([{Alias,'SQLT_NUM',_Len,_Prec,Scale}|Rest]) ->
+    [#stmtCol{ tag = Alias
+             , alias = Alias
+             , type = 'SQLT_NUM'
+             , len = undefined
              , prec = Scale
              , readonly = false} | cols_to_rec(Rest)];
 cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest]) ->
@@ -411,10 +418,10 @@ translate_datatype(Stmt, [<<>> | RestRow], [#stmtCol{} | RestCols]) ->
     [<<>> | translate_datatype(Stmt, RestRow, RestCols)];
 translate_datatype(Stmt, [R | RestRow], [#stmtCol{type = 'SQLT_DAT'} | RestCols]) ->
     [dderloci_utils:ora_to_dderltime(R) | translate_datatype(Stmt, RestRow, RestCols)];
-translate_datatype(Stmt, [R | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
-    SizeNum = size(R),
-    {Mantissa, Exponent} = dderloci_utils:oranumber_decode(<<SizeNum, R/binary>>),
-    Number = imem_datatype:decimal_to_io(Mantissa, Exponent),
+translate_datatype(Stmt, [null | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
+    [<<>> | translate_datatype(Stmt, RestRow, RestCols)];
+translate_datatype(Stmt, [Mantissa | RestRow], [#stmtCol{type = 'SQLT_NUM', prec = Prec} | RestCols]) ->
+    Number = imem_datatype:decimal_to_io(Mantissa, Prec),
     [Number | translate_datatype(Stmt, RestRow, RestCols)];
 translate_datatype(Stmt, [{_Pointer, Size, Path, Name} | RestRow], [#stmtCol{type = 'SQLT_BFILEE'} | RestCols]) ->
     SizeBin = integer_to_binary(Size),
@@ -461,19 +468,25 @@ fix_row_format([Row | Rest], Columns, ContainRowId) ->
     if
         ContainRowId ->
             {RestRow, [RowId]} = lists:split(length(Row) - 1, Row),
-            [{{}, list_to_tuple(fix_null(RestRow, Columns) ++ [RowId])} | fix_row_format(Rest, Columns, ContainRowId)];
+            [{{}, list_to_tuple(fix_format(RestRow, Columns) ++ [RowId])} | fix_row_format(Rest, Columns, ContainRowId)];
         true ->
-            [{{}, list_to_tuple(fix_null(Row, Columns))} | fix_row_format(Rest, Columns, ContainRowId)]
+            [{{}, list_to_tuple(fix_format(Row, Columns))} | fix_row_format(Rest, Columns, ContainRowId)]
     end.
 
-fix_null([], []) -> [];
-fix_null([<<Length:8, RestNum/binary>> | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
-    <<Number:Length/binary, _Discarded/binary>> = RestNum,
-    [Number | fix_null(RestRow, RestCols)];
-fix_null([<<0, 0, 0, 0, 0, 0, 0, _/binary>> | RestRow], [#stmtCol{type = 'SQLT_DAT'} | RestCols]) -> %% Null format for date.
-    [<<>> | fix_null(RestRow, RestCols)];
-fix_null([Cell | RestRow], [#stmtCol{} | RestCols]) ->
-    [Cell | fix_null(RestRow, RestCols)].
+
+
+fix_format([], []) -> [];
+fix_format([<<0:8, _/binary>> | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
+    [null | fix_format(RestRow, RestCols)];
+fix_format([Number | RestRow], [#stmtCol{type = 'SQLT_NUM', len = Len,  prec = Prec} | RestCols]) ->
+    %% TODO: Temporal extra work to test if this gives the correct results.
+    {Mantissa, Exponent} = dderloci_utils:oranumber_decode(Number),
+    FormattedNumber = imem_datatype:decimal_to_io(Mantissa, Exponent),
+    [imem_datatype:io_to_decimal(FormattedNumber, Len, Prec) | fix_format(RestRow, RestCols)];
+fix_format([<<0, 0, 0, 0, 0, 0, 0, _/binary>> | RestRow], [#stmtCol{type = 'SQLT_DAT'} | RestCols]) -> %% Null format for date.
+    [<<>> | fix_format(RestRow, RestCols)];
+fix_format([Cell | RestRow], [#stmtCol{} | RestCols]) ->
+    [Cell | fix_format(RestRow, RestCols)].
 
 -spec run_table_cmd(tuple(), atom(), binary()) -> ok | {error, term()}.
 run_table_cmd({oci_port, _, _} = _Connection, restore_table, _TableName) -> {error, <<"Command not implemented">>};

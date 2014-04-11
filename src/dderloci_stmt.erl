@@ -119,7 +119,7 @@ create_stmts([{del, _DelList} | Rest], TableName, Connection, Columns, ResultStm
             {error, ErrorMsg};
         Stmt ->
             BindTypes = [{<<":IDENTIFIER">>, 'SQLT_STR'}],
-            ResBind = Stmt:bind_vars(BindTypes),
+            Stmt:bind_vars(BindTypes),
             create_stmts(Rest, TableName, Connection, Columns, [{del, Stmt} | ResultStmt])
     end;
 create_stmts([{upd, []} | Rest], TableName, Connection, Columns, ResultStmt) ->
@@ -155,7 +155,7 @@ create_stmts([{upd, UpdList} | Rest], TableName, Connection, Columns, ResultStmt
             {error, ErrorMsg};
         Stmt ->
             BindTypes = [{<<":IDENTIFIER">>, 'SQLT_STR'} | create_bind_types(FilterColumns)],
-            ResBind = Stmt:bind_vars(BindTypes),
+            Stmt:bind_vars(BindTypes),
             case proplists:get_value(upd, ResultStmts) of
                 undefined ->
                     NewResultStmts = [{upd, [Stmt]} | ResultStmts];
@@ -184,7 +184,7 @@ create_stmts([{ins, InsList} | Rest], TableName, Connection, Columns, ResultStmt
             {error, ErrorMsg};
         Stmt ->
             BindTypes = create_bind_types(filter_columns(NonEmptyCols, Columns)),
-            ResBind = Stmt:bind_vars(BindTypes),
+            Stmt:bind_vars(BindTypes),
             case proplists:get_value(ins, ResultStmts) of
                 undefined ->
                     NewResultStmts = [{ins, [Stmt]} | ResultStmts];
@@ -315,8 +315,8 @@ filter_columns(ModifiedCols, Columns) ->
 create_upd_vars([#stmtCol{} = Col]) -> [Col#stmtCol.tag, " = :", Col#stmtCol.tag];
 create_upd_vars([#stmtCol{} = Col | Rest]) -> [Col#stmtCol.tag, " = :", Col#stmtCol.tag, ", ", create_upd_vars(Rest)].
 
-create_where_vars([]) -> [];
-create_where_vars([#stmtCol{} = Col | Rest]) -> [Col#stmtCol.tag, " = :", Col#stmtCol.tag, " and ", create_where_vars(Rest)].
+%%create_where_vars([]) -> [];
+%%create_where_vars([#stmtCol{} = Col | Rest]) -> [Col#stmtCol.tag, " = :", Col#stmtCol.tag, " and ", create_where_vars(Rest)].
 
 create_bind_types([]) -> [];
 create_bind_types([#stmtCol{} = Col | Rest]) ->
@@ -331,18 +331,14 @@ create_ins_vars([#stmtCol{} = Col | Rest]) -> [":", Col#stmtCol.tag, ", ", creat
 create_changedkey_vals([], _Cols) -> [];
 create_changedkey_vals([<<>> | Rest], [#stmtCol{} | RestCols]) ->
     [<<>> | create_changedkey_vals(Rest, RestCols)];
-create_changedkey_vals([Value | Rest], [#stmtCol{type = Type, prec = PrecOrig} | RestCols]) ->
+create_changedkey_vals([Value | Rest], [#stmtCol{type = Type, len = Len, prec = Prec} | RestCols]) ->
     case Type of
         'SQLT_DAT' ->
             ImemDatetime = imem_datatype:io_to_datetime(Value),
             [dderloci_utils:edatetime_to_ora(ImemDatetime) | create_changedkey_vals(Rest, RestCols)];
         'SQLT_NUM' ->
-            if
-                PrecOrig < -84 -> PrecFloat = 127;
-                true -> PrecFloat = PrecOrig
-            end,
-            ValueWithScale = dderloci_utils:apply_scale(Value, PrecFloat),
-            <<_SizeNumber:8, Number/binary>> = dderloci_utils:oranumber_encode(ValueWithScale),
+%            ValueWithScale = dderloci_utils:apply_scale(Value, PrecFloat),
+            Number = imem_datatype:io_to_decimal(Value, Len, Prec),
             [Number | create_changedkey_vals(Rest, RestCols)];
         'SQLT_BIN' ->
             [imem_datatype:binary_to_io(Value) | create_bind_vals(Rest, RestCols)];
@@ -359,6 +355,7 @@ create_bind_vals([Value | Rest], [#stmtCol{type = Type, len = Len} | RestCols]) 
             ImemDatetime = imem_datatype:io_to_datetime(Value),
             [dderloci_utils:edatetime_to_ora(ImemDatetime) | create_bind_vals(Rest, RestCols)];
         'SQLT_NUM' ->
+            % NewValue = imem_datatype:decimal_to_io(imem_datatype:io_to_decimal(Value)), <- if we need to pass by imem first
             [dderloci_utils:oranumber_encode(Value) | create_bind_vals(Rest, RestCols)];
         'SQLT_BIN' ->
             [imem_datatype:io_to_binary(Value, Len) | create_bind_vals(Rest, RestCols)];
@@ -402,6 +399,8 @@ get_modified_cols(#row{index = Index, values = Values}, Columns) ->
     LengthOrig = length(Values),
     get_modified_cols(OriginalValues, Values, Columns, 1).
 
+%% TODO: This should apply the same functions used by the rowfun to avoid repeating the code here again
+%% null -> <<>> should be the default convertion .
 -spec get_modified_cols([binary()], [binary()], [#stmtCol{}], pos_integer()) -> [integer()].
 get_modified_cols([], [], [], _) -> [];
 get_modified_cols([<<>> | RestOrig], [<<>> | RestValues], [#stmtCol{} | Columns], Pos) ->
@@ -415,10 +414,12 @@ get_modified_cols([OrigVal | RestOrig], [Value | RestValues], [#stmtCol{type = '
         _ ->
             [Pos | get_modified_cols(RestOrig, RestValues, Columns, Pos + 1)]
     end;
-get_modified_cols([OrigVal | RestOrig], [Value | RestValues], [#stmtCol{type = 'SQLT_NUM'} | Columns], Pos) ->
-    SizeNum = size(OrigVal),
-    {Mantissa, Exponent} = dderloci_utils:oranumber_decode(<<SizeNum, OrigVal/binary>>),
-    Number = imem_datatype:decimal_to_io(Mantissa, Exponent),
+get_modified_cols([null | RestOrig], [<<>> | RestValues], [#stmtCol{type = 'SQLT_NUM'} | Columns], Pos) ->
+    get_modified_cols(RestOrig, RestValues, Columns, Pos + 1);
+get_modified_cols([null | RestOrig], [_Value | RestValues], [#stmtCol{type = 'SQLT_NUM'} | Columns], Pos) ->
+    [Pos | get_modified_cols(RestOrig, RestValues, Columns, Pos + 1)];
+get_modified_cols([Mantissa | RestOrig], [Value | RestValues], [#stmtCol{type = 'SQLT_NUM', prec = Prec} | Columns], Pos) ->
+    Number = imem_datatype:decimal_to_io(Mantissa, Prec),
     if
         Number =:= Value ->
             get_modified_cols(RestOrig, RestValues, Columns, Pos + 1);
