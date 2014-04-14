@@ -391,13 +391,10 @@ build_sort_fun(_Sql, _Clms) ->
 
 -spec cols_to_rec([tuple()]) -> [#stmtCol{}].
 cols_to_rec([]) -> [];
-cols_to_rec([{Alias,'SQLT_NUM',_Len,0,-127}|Rest]) ->
-    [#stmtCol{ tag = Alias
-             , alias = Alias
-             , type = 'SQLT_NUM'
-             , len = undefined
-             , prec = 38
-             , readonly = false} | cols_to_rec(Rest)];
+cols_to_rec([{Alias,'SQLT_NUM',Len,63,-127}|Rest]) -> %% Real type
+    cols_to_rec([{Alias,'SQLT_NUM',Len,undefined,19}|Rest]);
+cols_to_rec([{Alias,'SQLT_NUM',Len,_Prec,-127}|Rest]) -> %% Float type or unlimited number.
+    cols_to_rec([{Alias,'SQLT_NUM',Len,undefined,38}|Rest]);
 cols_to_rec([{Alias,'SQLT_NUM',_Len,_Prec,Scale}|Rest]) ->
     [#stmtCol{ tag = Alias
              , alias = Alias
