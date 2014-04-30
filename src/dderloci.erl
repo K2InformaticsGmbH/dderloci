@@ -128,7 +128,12 @@ handle_cast({fetch_recs_async, false, _}, #qry{fsm_ref = FsmRef, stmt_result = S
     #stmtResult{stmtRef = StmtRef, stmtCols = Clms} = StmtResult,
     case StmtRef:fetch_rows(?DEFAULT_ROW_SIZE) of
         {{rows, Rows}, Completed} ->
-            FsmRef:rows({fix_row_format(Rows, Clms, ContainRowId), Completed});
+            try FsmRef:rows({fix_row_format(Rows, Clms, ContainRowId), Completed}) of
+                ok -> ok
+            catch
+                _Class:Result ->
+                    FsmRef:rows({error, Result})
+            end;
         {error, Error} ->
             FsmRef:rows({error, Error})
     end,
