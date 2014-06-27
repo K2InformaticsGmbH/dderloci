@@ -47,15 +47,11 @@ oranumber_encode(NumberBin) ->
 -spec oranumber_encode(integer(), integer()) -> binary().
 oranumber_encode(0, _) -> <<1, 128>>;
 oranumber_encode(Mantissa, Exponent) when Mantissa > 0 ->
-    io:format("The mantissa: ~p and the exponent: ~p~n", [Mantissa, Exponent]),
     NormMant = normalize_mantissa(Mantissa, Mantissa rem 100),
-    io:format("The mantissa normalized: ~p~n", [NormMant]),
     Encoded = [Exponent + 193 | encode_mantissa(NormMant, 1, [])],
     list_to_binary([length(Encoded) | Encoded]);
 oranumber_encode(Mantissa, Exponent) ->
-    io:format("The mantissa: ~p and the exponent: ~p~n", [Mantissa, Exponent]),
     NormMant = normalize_mantissa(Mantissa, Mantissa rem 100),
-    io:format("The mantissa normalized: ~p~n", [NormMant]),
     Encoded = [62 - Exponent | encode_mantissa(NormMant, 101, [102])],
     list_to_binary([length(Encoded) | Encoded]).
 
@@ -214,6 +210,7 @@ pow_bin(X, N, Acc) ->
             pow_bin(X * X, N div 2, Acc * X)
     end.
 
+-spec get_params(binary()) -> [binary()].
 get_params(Sql) ->
     case sqlparse:parsetree(Sql) of
         {ok,{[{ParseTree,_}],_}} ->
