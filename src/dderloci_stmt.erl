@@ -36,7 +36,7 @@ prepare(TableName, ChangeList, Connection, Columns) ->
 
 -spec execute(pid()) -> {error, term()} | list().
 execute(Pid) ->
-	gen_server:call(Pid, execute).
+	gen_server:call(Pid, execute, ?ExecTimeout).
 
 %%% gen_server callbacks
 
