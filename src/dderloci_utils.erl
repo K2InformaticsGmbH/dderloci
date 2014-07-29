@@ -5,8 +5,7 @@
         ,ora_to_dderltime/1
         ,dderltime_to_ora/1
         ,edatetime_to_ora/1
-        ,apply_scale/2
-        ,get_params/1]).
+        ,apply_scale/2]).
 
 -spec oranumber_decode(binary()) -> {integer(), integer()} | {error, binary()}.
 oranumber_decode(<<1:8, _/binary>>) -> {0, 0};
@@ -208,19 +207,4 @@ pow_bin(X, N, Acc) ->
             NewAcc;
         _ ->
             pow_bin(X * X, N div 2, Acc * X)
-    end.
-
--spec get_params(binary()) -> [binary()].
-get_params(Sql) ->
-    case sqlparse:parsetree(Sql) of
-        {ok,{[{ParseTree,_}],_}} ->
-            Pred = fun(P,Ctx) ->
-                           case P of
-                               {param, Param} -> [Param|Ctx];
-                               _ -> Ctx
-                           end
-                   end,
-            sqlparse:foldtd(Pred,[],ParseTree);
-        _ ->
-            []
     end.
