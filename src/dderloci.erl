@@ -108,7 +108,11 @@ handle_call(fetch_close, _From, #qry{} = State) ->
     {reply, ok, State#qry{pushlock = true}};
 handle_call(close, _From, #qry{stmt_result = StmtResult} = State) ->
     #stmtResult{stmtRef = StmtRef} = StmtResult,
-    {stop, normal, StmtRef:close(), State#qry{stmt_result = StmtResult#stmtResult{stmtRef = undefined}}};
+    try StmtRef:close()
+    catch
+        exit:{noproc,_} -> ok %trying to close an already closed statement.
+    end,
+    {stop, normal, ok, State#qry{stmt_result = StmtResult#stmtResult{stmtRef = undefined}}};
 handle_call(_Ignored, _From, State) ->
     {noreply, State}.
 
@@ -218,7 +222,8 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
             case Connection:prep_sql(Sql) of
                 {error, {ErrorId,Msg}} ->
                     {error, {ErrorId,Msg}};
-                Statement -> result_exec_stmt(Statement:exec_stmt(), Statement, Sql, NewSql, RowIdAdded, Connection)
+                Statement ->
+                    result_exec_stmt(Statement:exec_stmt(), Statement, Sql, NewSql, RowIdAdded, Connection)
             end;
         Statement ->
             result_exec_stmt(Statement:exec_stmt(), Statement, Sql, NewSql, RowIdAdded, Connection)
