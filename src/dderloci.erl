@@ -204,8 +204,16 @@ qualify_field(Table, Field) -> iolist_to_binary(add_field(Table, Field)).
 -spec add_field(tuple() | binary(), binary() | list()) -> iolist().
 add_field({as, _, Alias}, Field) -> [Alias, ".", Field];
 add_field({{as, _, Alias}, _}, Field) -> [Alias, ".", Field];
-add_field({Tab, _}, Field) -> [Tab, ".", Field];
-add_field(Tab, Field) -> [Tab, ".", Field].
+add_field({Tab, _}, Field) ->
+    include_at(binary:split(Tab, <<"@">>), Field);
+add_field(Tab, Field) ->
+    include_at(binary:split(Tab, <<"@">>), Field).
+
+-spec include_at(list(), binary() | list()) -> iolist().
+include_at([TabName, TabLocation], Field) ->
+    [TabName, ".", Field, $@, TabLocation];
+include_at([TabName], Field) ->
+    [TabName, ".", Field].
 
 -spec expand_star(list(), list()) -> list().
 expand_star([<<"*">>], Forms) -> qualify_star(Forms);
