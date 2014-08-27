@@ -403,6 +403,8 @@ get_modified_cols(#row{index = Index, values = Values}, Columns) ->
 %% null -> <<>> should be the default convertion .
 -spec get_modified_cols([binary()], [binary()], [#stmtCol{}], pos_integer()) -> [integer()].
 get_modified_cols([], [], [], _) -> [];
+get_modified_cols([_Orig | RestOrig], [_Value | RestValues], [#stmtCol{readonly=true} | Columns], Pos) ->
+    get_modified_cols(RestOrig, RestValues, Columns, Pos + 1);
 get_modified_cols([<<>> | RestOrig], [<<>> | RestValues], [#stmtCol{} | Columns], Pos) ->
     get_modified_cols(RestOrig, RestValues, Columns, Pos + 1);
 get_modified_cols([<<>> | RestOrig], [_Value | RestValues], [#stmtCol{} | Columns], Pos) ->
