@@ -38,7 +38,7 @@
 -spec exec(tuple(), binary(), integer()) -> ok | {ok, pid()} | {error, term()}.
 exec({oci_port, _, _} = Connection, Sql, MaxRowCount) ->
     case sqlparse:parsetree(Sql) of
-        {ok,{[{{select, SelectSections},_}],_}} ->
+        {ok,[{{select, SelectSections},_}]} ->
             {TableName, NewSql, RowIdAdded} = inject_rowid(SelectSections, Sql);
         _ ->
             TableName = <<"">>,
@@ -357,7 +357,7 @@ filter_and_sort_internal(_Connection, FilterSpec, SortSpec, Cols, Query, StmtCol
     SortSpecExplicit = [{Col, Dir} || {Col, Dir} <- SortSpec, is_integer(Col)],
     NewSortFun = imem_sql_expr:sort_spec_fun(SortSpecExplicit, FullMap, FullMap),
     case sqlparse:parsetree(Query) of
-        {ok,{[{{select, SelectSections},_}],_}} ->
+        {ok,[{{select, SelectSections},_}]} ->
             {fields, Flds} = lists:keyfind(fields, 1, SelectSections),
             {from, Tables} = lists:keyfind(from, 1, SelectSections),
             {where, WhereTree} = lists:keyfind(where, 1, SelectSections),
