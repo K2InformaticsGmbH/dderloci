@@ -39,7 +39,7 @@
 exec({oci_port, _, _} = Connection, Sql, MaxRowCount) ->
     case sqlparse:parsetree(Sql) of
         {ok,[{{select, SelectSections},_}]} ->
-            {TableName, NewSql, RowIdAdded} = inject_rowid(SelectSections, Sql);
+            {TableName, NewSql, RowIdAdded} = inject_rowid(select_type(SelectSections), SelectSections, Sql);
         _ ->
             TableName = <<"">>,
             NewSql = Sql,
@@ -180,9 +180,23 @@ code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
 
 %% Internal functions %%%
+-spec select_type(list()) -> atom().
+select_type(Args) ->
+    case lists:keyfind(opt, 1, Args) of
+        <<>> ->
+            case lists:keyfind('group by', 1, Args) of
+                [] -> select;
+                _ -> agregation
+            end;
+        _ -> agregation
+    end.
 
--spec inject_rowid(list(), binary()) -> {binary(), binary()}.
-inject_rowid(Args, Sql) ->
+-spec inject_rowid(atom(), list(), binary()) -> {binary(), binary()}.
+inject_rowid(agregation, Args, Sql) ->
+    {from, [FirstTable|_]=_Forms} = lists:keyfind(from, 1, Args),
+    %% Do not add rowid on agregation.
+    {FirstTable, Sql, false};
+inject_rowid(select, Args, Sql) ->
     {fields, Flds} = lists:keyfind(fields, 1, Args),
     {from, [FirstTable|_]=Forms} = lists:keyfind(from, 1, Args),
     NewFields = expand_star(Flds, Forms) ++ [add_rowid_field(FirstTable)],
