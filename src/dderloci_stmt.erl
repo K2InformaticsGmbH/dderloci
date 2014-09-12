@@ -334,8 +334,7 @@ create_changedkey_vals([<<>> | Rest], [#stmtCol{} | RestCols]) ->
 create_changedkey_vals([Value | Rest], [#stmtCol{type = Type, len = Len, prec = Prec} | RestCols]) ->
     case Type of
         'SQLT_DAT' ->
-            ImemDatetime = imem_datatype:io_to_datetime(Value),
-            [dderloci_utils:edatetime_to_ora(ImemDatetime) | create_changedkey_vals(Rest, RestCols)];
+            [dderloci_utils:dderltime_to_ora(Value) | create_changedkey_vals(Rest, RestCols)];
         'SQLT_NUM' ->
 %            ValueWithScale = dderloci_utils:apply_scale(Value, PrecFloat),
             Number = imem_datatype:io_to_decimal(Value, Len, Prec),
@@ -352,8 +351,7 @@ create_bind_vals([<<>> | Rest], [_Col | RestCols]) ->
 create_bind_vals([Value | Rest], [#stmtCol{type = Type, len = Len} | RestCols]) ->
     case Type of
         'SQLT_DAT' ->
-            ImemDatetime = imem_datatype:io_to_datetime(Value),
-            [dderloci_utils:edatetime_to_ora(ImemDatetime) | create_bind_vals(Rest, RestCols)];
+            [dderloci_utils:dderltime_to_ora(Value) | create_bind_vals(Rest, RestCols)];
         'SQLT_NUM' ->
             % NewValue = imem_datatype:decimal_to_io(imem_datatype:io_to_decimal(Value)), <- if we need to pass by imem first
             [dderloci_utils:oranumber_encode(Value) | create_bind_vals(Rest, RestCols)];
@@ -364,7 +362,6 @@ create_bind_vals([Value | Rest], [#stmtCol{type = Type, len = Len} | RestCols]) 
     end.
 
 bind_types_map('SQLT_NUM') -> 'SQLT_VNU';
-bind_types_map('SQLT_DAT') -> 'SQLT_ODT';
 %% There is no really support for this types at the moment so use string to send the data...
 bind_types_map('SQLT_INT') -> 'SQLT_STR';
 bind_types_map('SQLT_FLT') -> 'SQLT_STR';

@@ -182,9 +182,9 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions %%%
 -spec select_type(list()) -> atom().
 select_type(Args) ->
-    case lists:keyfind(opt, 1, Args) of
+    case proplists:get_value(opt, Args) of
         <<>> ->
-            case lists:keyfind('group by', 1, Args) of
+            case proplists:get_value('group by', Args) of
                 [] -> select;
                 _ -> agregation
             end;

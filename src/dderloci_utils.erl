@@ -4,7 +4,6 @@
         ,oranumber_encode/1
         ,ora_to_dderltime/1
         ,dderltime_to_ora/1
-        ,edatetime_to_ora/1
         ,apply_scale/2]).
 
 -spec oranumber_decode(binary()) -> {integer(), integer()} | {error, binary()}.
@@ -113,29 +112,13 @@ remove_trailing_zeros(OrigBin) ->
     end.
 
 -spec ora_to_dderltime(binary()) -> binary().
-ora_to_dderltime(<< Year:16, Month:8, Day:8, Hour:8, Minute:8, Second:8, _/binary >>) ->
-    iolist_to_binary(io_lib:format("~2..0B.~2..0B.~4..0B ~2..0B:~2..0B:~2..0B", [Day,Month,Year,Hour,Minute,Second])).
+ora_to_dderltime(OraTime) ->
+    imem_datatype:datetime_to_io(oci_util:from_dts(OraTime)).
 
 -spec dderltime_to_ora(binary()) -> binary().
 dderltime_to_ora(<<>>) -> <<>>;
 dderltime_to_ora(DDerlTime) ->
-    <<DBin:2/binary, $., MBin:2/binary, $., YBin:4/binary, 32, HBin:2/binary, $:, MinBin:2/binary, $:, SecBin:2/binary>> = DDerlTime,
-    Year = binary_to_integer(YBin),
-    Month = binary_to_integer(MBin),
-    Day = binary_to_integer(DBin),
-    Hour = binary_to_integer(HBin),
-    Minute = binary_to_integer(MinBin),
-    Second = binary_to_integer(SecBin),
-    <<Year:16, Month, Day, Hour, Minute, Second, 0>>.
-
--spec edatetime_to_ora(tuple()) -> binary().
-edatetime_to_ora({Meg,Mcr,Mil} = Now)
-    when is_integer(Meg)
-    andalso is_integer(Mcr)
-    andalso is_integer(Mil) ->
-    edatetime_to_ora(calendar:now_to_datetime(Now));
-edatetime_to_ora({{Year,Month,Day},{Hour,Minute,Second}}) ->
-    <<Year:16, Month, Day, Hour, Minute, Second, 0>>.
+    oci_util:to_dts(imem_datatype:io_to_datetime(DDerlTime)).
 
 -spec apply_scale(binary(), integer()) -> binary().
 apply_scale(Value, Scale) ->
