@@ -377,12 +377,16 @@ inserted_changed_keys(_, _, _) ->
 -spec split_by_columns_mod([#row{}], [#stmtCol{}], [{tuple(), [#row{}]}]) -> [{tuple(), [#row{}]}].
 split_by_columns_mod([], _Columns, Result) -> Result;
 split_by_columns_mod([#row{} = Row | RestRows], Columns, Result) ->
-    ModifiedCols = list_to_tuple(get_modified_cols(Row, Columns)),
-    case proplists:get_value(ModifiedCols, Result) of
-        undefined ->
-            NewResult = [{ModifiedCols, [Row]} | Result];
-        RowsSameCol ->
-            NewResult = lists:keyreplace(ModifiedCols, 1, Result, {ModifiedCols, [Row | RowsSameCol]})
+    case list_to_tuple(get_modified_cols(Row, Columns)) of
+        {} -> %% No changes in the row, nothing to do
+            NewResult = Result;
+        ModifiedCols ->
+            case proplists:get_value(ModifiedCols, Result) of
+                undefined ->
+                    NewResult = [{ModifiedCols, [Row]} | Result];
+                RowsSameCol ->
+                    NewResult = lists:keyreplace(ModifiedCols, 1, Result, {ModifiedCols, [Row | RowsSameCol]})
+            end
     end,
     split_by_columns_mod(RestRows, Columns, NewResult).
 
