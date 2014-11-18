@@ -3,12 +3,13 @@
 {application, dderloci,
  [
   {description, ""},
-  {vsn, "0.0.2"},
+  {vsn, "0.0.3"},
   {registered, []},
   {applications, [
                   kernel,
-                  stdlib
+                  stdlib,
+                  erloci
                  ]},
-  {mod, { dderloci_app, []}},
+  {mod, {dderloci, []}},
   {env, []}
  ]}.

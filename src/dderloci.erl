@@ -1,7 +1,11 @@
 -module(dderloci).
+-behaviour(application).
 -behaviour(gen_server).
 
 -include("dderloci.hrl").
+
+%% Application callbacks
+-export([start/2, stop/1]).
 
 %% API
 -export([
@@ -34,7 +38,19 @@
 
 -define(PREFETCH_SIZE, 250).
 
+%% ===================================================================
+%% Application callbacks
+%% ===================================================================
+
+start(_StartType, _StartArgs) ->
+    dderloci_sup:start_link().
+
+stop(_State) ->
+    ok.
+
+%% ===================================================================
 %% Exported functions
+%% ===================================================================
 -spec exec(tuple(), binary(), integer()) -> ok | {ok, pid()} | {error, term()}.
 exec({oci_port, _, _} = Connection, Sql, MaxRowCount) ->
     case sqlparse:parsetree(Sql) of
