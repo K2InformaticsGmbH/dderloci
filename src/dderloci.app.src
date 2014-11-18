@@ -2,7 +2,7 @@
 %% ex: ft=erlang
 {application, dderloci,
  [
-  {description, ""},
+  {description, "Interfacing dderl with erloci"},
   {vsn, "0.0.3"},
   {registered, []},
   {applications, [

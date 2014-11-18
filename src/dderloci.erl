@@ -5,7 +5,7 @@
 -include("dderloci.hrl").
 
 %% Application callbacks
--export([start/2, stop/1]).
+-export([start/0, stop/0, start/2, stop/1]).
 
 %% API
 -export([
@@ -41,6 +41,14 @@
 %% ===================================================================
 %% Application callbacks
 %% ===================================================================
+
+start() ->
+    ok = application:start(erloci),
+    application:start(?MODULE).
+
+stop() ->
+    application:stop(?MODULE),
+    application:stop(erloci).
 
 start(_StartType, _StartArgs) ->
     dderloci_sup:start_link().
