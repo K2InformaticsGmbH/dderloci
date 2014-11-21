@@ -447,16 +447,28 @@ build_sort_fun(_Sql, _Clms) ->
 
 -spec cols_to_rec([tuple()]) -> [#stmtCol{}].
 cols_to_rec([]) -> [];
-cols_to_rec([{Alias,'SQLT_NUM',Len,63,-127}|Rest]) -> %% Real type
-    cols_to_rec([{Alias,'SQLT_NUM',Len,undefined,19}|Rest]);
-cols_to_rec([{Alias,'SQLT_NUM',Len,_Prec,-127}|Rest]) -> %% Float type or unlimited number.
-    cols_to_rec([{Alias,'SQLT_NUM',Len,undefined,38}|Rest]);
+cols_to_rec([{Alias,'SQLT_NUM',_Len,63,-127}|Rest]) ->
+    %% Real type
+    [#stmtCol{ tag = Alias
+             , alias = Alias
+             , type = 'SQLT_NUM'
+             , len = 19
+             , prec = dynamic
+             , readonly = false} | cols_to_rec(Rest)];
+cols_to_rec([{Alias,'SQLT_NUM',_Len,_Prec,-127}|Rest]) ->
+    %% Float type or unlimited number.
+    [#stmtCol{ tag = Alias
+             , alias = Alias
+             , type = 'SQLT_NUM'
+             , len = 38
+             , prec = dynamic
+             , readonly = false} | cols_to_rec(Rest)];
 cols_to_rec([{Alias,'SQLT_NUM',_Len,0,0}|Rest]) ->
     [#stmtCol{ tag = Alias
              , alias = Alias
              , type = 'SQLT_NUM'
-             , len = undefined
-             , prec = 38
+             , len = 38
+             , prec = dynamic
              , readonly = true} | cols_to_rec(Rest)];
 cols_to_rec([{Alias,'SQLT_NUM',_Len,_Prec,Scale}|Rest]) ->
     [#stmtCol{ tag = Alias
@@ -480,6 +492,10 @@ translate_datatype(Stmt, [R | RestRow], [#stmtCol{type = 'SQLT_DAT'} | RestCols]
     [dderloci_utils:ora_to_dderltime(R) | translate_datatype(Stmt, RestRow, RestCols)];
 translate_datatype(Stmt, [null | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
     [<<>> | translate_datatype(Stmt, RestRow, RestCols)];
+translate_datatype(Stmt, [Mantissa | RestRow], [#stmtCol{type = 'SQLT_NUM', len = Scale, prec = dynamic} | RestCols]) ->
+    %% Float / Real type or unlimited numbers.
+    Number = dderloci_utils:clean_dynamic_prec(imem_datatype:decimal_to_io(Mantissa, Scale)),
+    [Number | translate_datatype(Stmt, RestRow, RestCols)];
 translate_datatype(Stmt, [Mantissa | RestRow], [#stmtCol{type = 'SQLT_NUM', prec = Prec} | RestCols]) ->
     Number = imem_datatype:decimal_to_io(Mantissa, Prec),
     [Number | translate_datatype(Stmt, RestRow, RestCols)];
@@ -538,8 +554,11 @@ fix_row_format([Row | Rest], Columns, ContainRowId) ->
 fix_format([], []) -> [];
 fix_format([<<0:8, _/binary>> | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
     [null | fix_format(RestRow, RestCols)];
+fix_format([Number | RestRow], [#stmtCol{type = 'SQLT_NUM', len = Scale, prec = dynamic} | RestCols]) ->
+    {Mantissa, Exponent} = dderloci_utils:oranumber_decode(Number),
+    FormattedNumber = imem_datatype:decimal_to_io(Mantissa, Exponent),
+    [imem_datatype:io_to_decimal(FormattedNumber, undefined, Scale) | fix_format(RestRow, RestCols)];
 fix_format([Number | RestRow], [#stmtCol{type = 'SQLT_NUM', len = Len,  prec = Prec} | RestCols]) ->
-    %% TODO: Temporal extra work to test if this gives the correct results.
     {Mantissa, Exponent} = dderloci_utils:oranumber_decode(Number),
     FormattedNumber = imem_datatype:decimal_to_io(Mantissa, Exponent),
     [imem_datatype:io_to_decimal(FormattedNumber, Len, Prec) | fix_format(RestRow, RestCols)];

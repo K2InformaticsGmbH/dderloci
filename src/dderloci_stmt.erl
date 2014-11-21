@@ -331,12 +331,14 @@ create_ins_vars([#stmtCol{} = Col | Rest]) -> [":", Col#stmtCol.tag, ", ", creat
 create_changedkey_vals([], _Cols) -> [];
 create_changedkey_vals([<<>> | Rest], [#stmtCol{} | RestCols]) ->
     [<<>> | create_changedkey_vals(Rest, RestCols)];
+create_changedkey_vals([Value | Rest], [#stmtCol{type = 'SQLT_NUM', len = Scale, prec = dynamic} | RestCols]) ->
+    Number = imem_datatype:io_to_decimal(Value, undefined, Scale),
+    [Number | create_changedkey_vals(Rest, RestCols)];
 create_changedkey_vals([Value | Rest], [#stmtCol{type = Type, len = Len, prec = Prec} | RestCols]) ->
     case Type of
         'SQLT_DAT' ->
             [dderloci_utils:dderltime_to_ora(Value) | create_changedkey_vals(Rest, RestCols)];
         'SQLT_NUM' ->
-%            ValueWithScale = dderloci_utils:apply_scale(Value, PrecFloat),
             Number = imem_datatype:io_to_decimal(Value, Len, Prec),
             [Number | create_changedkey_vals(Rest, RestCols)];
         'SQLT_BIN' ->
@@ -353,7 +355,6 @@ create_bind_vals([Value | Rest], [#stmtCol{type = Type, len = Len} | RestCols]) 
         'SQLT_DAT' ->
             [dderloci_utils:dderltime_to_ora(Value) | create_bind_vals(Rest, RestCols)];
         'SQLT_NUM' ->
-            % NewValue = imem_datatype:decimal_to_io(imem_datatype:io_to_decimal(Value)), <- if we need to pass by imem first
             [dderloci_utils:oranumber_encode(Value) | create_bind_vals(Rest, RestCols)];
         'SQLT_BIN' ->
             [imem_datatype:io_to_binary(Value, Len) | create_bind_vals(Rest, RestCols)];
@@ -421,6 +422,14 @@ get_modified_cols([null | RestOrig], [<<>> | RestValues], [#stmtCol{type = 'SQLT
     get_modified_cols(RestOrig, RestValues, Columns, Pos + 1);
 get_modified_cols([null | RestOrig], [_Value | RestValues], [#stmtCol{type = 'SQLT_NUM'} | Columns], Pos) ->
     [Pos | get_modified_cols(RestOrig, RestValues, Columns, Pos + 1)];
+get_modified_cols([Mantissa | RestOrig], [Value | RestValues], [#stmtCol{type = 'SQLT_NUM', len = Scale, prec = dynamic} | Columns], Pos) ->
+    Number = dderloci_utils:clean_dynamic_prec(imem_datatype:decimal_to_io(Mantissa, Scale)),
+    if
+        Number =:= Value ->
+            get_modified_cols(RestOrig, RestValues, Columns, Pos + 1);
+        true ->
+            [Pos | get_modified_cols(RestOrig, RestValues, Columns, Pos + 1)]
+    end;
 get_modified_cols([Mantissa | RestOrig], [Value | RestValues], [#stmtCol{type = 'SQLT_NUM', prec = Prec} | Columns], Pos) ->
     Number = imem_datatype:decimal_to_io(Mantissa, Prec),
     if

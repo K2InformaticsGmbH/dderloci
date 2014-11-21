@@ -4,7 +4,8 @@
         ,oranumber_encode/1
         ,ora_to_dderltime/1
         ,dderltime_to_ora/1
-        ,apply_scale/2]).
+        ,apply_scale/2
+        ,clean_dynamic_prec/1]).
 
 -spec oranumber_decode(binary()) -> {integer(), integer()} | {error, binary()}.
 oranumber_decode(<<1:8, _/binary>>) -> {0, 0};
@@ -190,4 +191,17 @@ pow_bin(X, N, Acc) ->
             NewAcc;
         _ ->
             pow_bin(X * X, N div 2, Acc * X)
+    end.
+
+-spec clean_dynamic_prec(binary()) -> binary().
+clean_dynamic_prec(Number) ->
+    case binary:split(Number, <<".">>) of
+        [Int] -> Int;
+        [Int, Frac] ->
+            case string:strip(binary_to_list(Frac), right, $0) of
+                [] -> Int;
+                FracList ->
+                    CleanFrac = list_to_binary(FracList),
+                    <<Int/binary, $., CleanFrac/binary>>
+            end
     end.

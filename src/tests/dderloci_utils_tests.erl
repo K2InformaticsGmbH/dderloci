@@ -156,4 +156,23 @@ apply_scale_negative_test_() ->
         ?_assertEqual(<<"0">>, dderloci_utils:apply_scale(<<"-0.00355">>, -2))
     ].
 
+clean_dynamic_prec_test_() ->
+    [
+        ?_assertEqual(<<"50">>, dderloci_utils:clean_dynamic_prec(<<"50">>)),
+        ?_assertEqual(<<"0">>, dderloci_utils:clean_dynamic_prec(<<"0">>)),
+        ?_assertEqual(<<"000">>, dderloci_utils:clean_dynamic_prec(<<"000">>)),
+        ?_assertEqual(<<"0">>, dderloci_utils:clean_dynamic_prec(<<"0.0">>)),
+        ?_assertEqual(<<"0.001">>, dderloci_utils:clean_dynamic_prec(<<"0.001">>)),
+        ?_assertEqual(<<"0.002">>, dderloci_utils:clean_dynamic_prec(<<"0.00200">>)),
+        ?_assertEqual(<<"0.5432">>, dderloci_utils:clean_dynamic_prec(<<"0.5432">>)),
+        ?_assertEqual(<<"0.5">>, dderloci_utils:clean_dynamic_prec(<<"0.500">>)),
+        ?_assertEqual(<<"-50">>, dderloci_utils:clean_dynamic_prec(<<"-50">>)),
+        ?_assertEqual(<<"-0.001">>, dderloci_utils:clean_dynamic_prec(<<"-0.001">>)),
+        ?_assertEqual(<<"-0.002">>, dderloci_utils:clean_dynamic_prec(<<"-0.00200">>)),
+        ?_assertEqual(<<"-0.5432">>, dderloci_utils:clean_dynamic_prec(<<"-0.5432">>)),
+        ?_assertEqual(<<"-0.5">>, dderloci_utils:clean_dynamic_prec(<<"-0.500">>)),
+        ?_assertEqual(<<"230">>, dderloci_utils:clean_dynamic_prec(<<"230.0">>)),
+        ?_assertEqual(<<"-33.49">>, dderloci_utils:clean_dynamic_prec(<<"-33.490">>))
+    ].
+
 -endif.
