@@ -70,7 +70,7 @@ exec({oci_port, _, _} = Connection, Sql, MaxRowCount) ->
             RowIdAdded = false,
             SelectSections = []
     end,
-    case run_query(Connection, Sql, NewSql, RowIdAdded) of
+    case run_query(Connection, Sql, NewSql, RowIdAdded, SelectSections) of
         {ok, #stmtResult{} = StmtResult, ContainRowId} ->
             LowerSql = string:to_lower(binary_to_list(Sql)),
             case string:str(LowerSql, "rownum") of
@@ -261,7 +261,7 @@ expand_star(Flds, _Forms) -> Flds.
 qualify_star([]) -> [];
 qualify_star([Table | Rest]) -> [qualify_field(Table, "*") | qualify_star(Rest)].
 
-run_query(Connection, Sql, NewSql, RowIdAdded) ->
+run_query(Connection, Sql, NewSql, RowIdAdded, SelectSections) ->
     %% For now only the first table is counted.
     case Connection:prep_sql(NewSql) of
         {error, {ErrorId,Msg}} ->
@@ -269,13 +269,25 @@ run_query(Connection, Sql, NewSql, RowIdAdded) ->
                 {error, {ErrorId,Msg}} ->
                     {error, {ErrorId,Msg}};
                 Statement ->
-                    result_exec_stmt(Statement:exec_stmt(), Statement, Sql, NewSql, RowIdAdded, Connection)
+                    result_exec_stmt(Statement:exec_stmt()
+                                    ,Statement
+                                    ,Sql
+                                    ,NewSql
+                                    ,RowIdAdded
+                                    ,Connection
+                                    ,SelectSections)
             end;
         Statement ->
-            result_exec_stmt(Statement:exec_stmt(), Statement, Sql, NewSql, RowIdAdded, Connection)
+            result_exec_stmt(Statement:exec_stmt()
+                            ,Statement
+                            ,Sql
+                            ,NewSql
+                            ,RowIdAdded
+                            ,Connection
+                            ,SelectSections)
     end.
 
-result_exec_stmt({cols, Clms}, Statement, _Sql, NewSql, RowIdAdded, _Connection) ->
+result_exec_stmt({cols, Clms}, Statement, _Sql, NewSql, RowIdAdded, _Connection, SelectSections) ->
     if
         RowIdAdded -> % ROWID is hidden from columns
             [_|ColumnsR] = lists:reverse(Clms),
@@ -283,7 +295,8 @@ result_exec_stmt({cols, Clms}, Statement, _Sql, NewSql, RowIdAdded, _Connection)
         true ->
             Columns = Clms
     end,
-    NewClms = cols_to_rec(Columns),
+    Fields = proplists:get_value(fields, SelectSections),
+    NewClms = cols_to_rec(Columns, Fields),
     SortFun = build_sort_fun(NewSql, NewClms),
     {ok
      , #stmtResult{ stmtCols = NewClms
@@ -301,13 +314,13 @@ result_exec_stmt({cols, Clms}, Statement, _Sql, NewSql, RowIdAdded, _Connection)
                     , sortFun  = SortFun
                     , sortSpec = []}
      , RowIdAdded};
-result_exec_stmt({rowids, _}, Statement, _Sql, _NewSql, _RowIdAdded, _Connection) ->
+result_exec_stmt({rowids, _}, Statement, _Sql, _NewSql, _RowIdAdded, _Connection, _SelectSections) ->
     Statement:close(),
     ok;
-result_exec_stmt({executed, _}, Statement, _Sql, _NewSql, _RowIdAdded, _Connection) ->
+result_exec_stmt({executed, _}, Statement, _Sql, _NewSql, _RowIdAdded, _Connection, _SelectSections) ->
     Statement:close(),
     ok;
-result_exec_stmt(_RowIdError, Statement, Sql, _NewSql, _RowIdAdded, Connection) ->
+result_exec_stmt(_RowIdError, Statement, Sql, _NewSql, _RowIdAdded, Connection, SelectSections) ->
     Statement:close(),
     case Connection:prep_sql(Sql) of
         {error, {ErrorId,Msg}} ->
@@ -315,7 +328,8 @@ result_exec_stmt(_RowIdError, Statement, Sql, _NewSql, _RowIdAdded, Connection) 
         Statement1 ->
             case Statement1:exec_stmt() of
                 {cols, Clms} ->
-                    NewClms = cols_to_rec(Clms),
+                    Fields = proplists:get_value(fields, SelectSections),
+                    NewClms = cols_to_rec(Clms, Fields),
                     SortFun = build_sort_fun(Sql, NewClms),
                     {ok
                      , #stmtResult{ stmtCols = NewClms
@@ -445,45 +459,49 @@ build_full_map(Clms) ->
 build_sort_fun(_Sql, _Clms) ->
     fun(_Row) -> {} end.
 
--spec cols_to_rec([tuple()]) -> [#stmtCol{}].
-cols_to_rec([]) -> [];
-cols_to_rec([{Alias,'SQLT_NUM',_Len,63,-127}|Rest]) ->
+-spec cols_to_rec([tuple()], list()) -> [#stmtCol{}].
+cols_to_rec([], _) -> [];
+cols_to_rec([{Alias,'SQLT_NUM',_Len,63,-127}|Rest], Fields) ->
     %% Real type
-    [#stmtCol{ tag = Alias
+    {Tag, ReadOnly, NewFields} = find_original_field(Alias, Fields),
+    [#stmtCol{ tag = Tag
              , alias = Alias
              , type = 'SQLT_NUM'
              , len = 19
              , prec = dynamic
-             , readonly = false} | cols_to_rec(Rest)];
-cols_to_rec([{Alias,'SQLT_NUM',_Len,_Prec,-127}|Rest]) ->
+             , readonly = ReadOnly} | cols_to_rec(Rest, NewFields)];
+cols_to_rec([{Alias,'SQLT_NUM',_Len,_Prec,-127}|Rest], Fields) ->
     %% Float type or unlimited number.
+    {Tag, ReadOnly, NewFields} = find_original_field(Alias, Fields),
+    [#stmtCol{ tag = Tag
+             , alias = Alias
+             , type = 'SQLT_NUM'
+             , len = 38
+             , prec = dynamic
+             , readonly = ReadOnly} | cols_to_rec(Rest, NewFields)];
+cols_to_rec([{Alias,'SQLT_NUM',_Len,0,0}|Rest], Fields) ->
     [#stmtCol{ tag = Alias
              , alias = Alias
              , type = 'SQLT_NUM'
              , len = 38
              , prec = dynamic
-             , readonly = false} | cols_to_rec(Rest)];
-cols_to_rec([{Alias,'SQLT_NUM',_Len,0,0}|Rest]) ->
-    [#stmtCol{ tag = Alias
-             , alias = Alias
-             , type = 'SQLT_NUM'
-             , len = 38
-             , prec = dynamic
-             , readonly = true} | cols_to_rec(Rest)];
-cols_to_rec([{Alias,'SQLT_NUM',_Len,_Prec,Scale}|Rest]) ->
-    [#stmtCol{ tag = Alias
+             , readonly = true} | cols_to_rec(Rest, Fields)];
+cols_to_rec([{Alias,'SQLT_NUM',_Len,_Prec,Scale}|Rest], Fields) ->
+    {Tag, ReadOnly, NewFields} = find_original_field(Alias, Fields),
+    [#stmtCol{ tag = Tag
              , alias = Alias
              , type = 'SQLT_NUM'
              , len = undefined
              , prec = Scale
-             , readonly = false} | cols_to_rec(Rest)];
-cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest]) ->
-    [#stmtCol{ tag = Alias
+             , readonly = ReadOnly} | cols_to_rec(Rest, NewFields)];
+cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest], Fields) ->
+    {Tag, ReadOnly, NewFields} = find_original_field(Alias, Fields),
+    [#stmtCol{ tag = Tag
              , alias = Alias
              , type = Type
              , len = Len
              , prec = Prec
-             , readonly = false} | cols_to_rec(Rest)].
+             , readonly = ReadOnly} | cols_to_rec(Rest, NewFields)].
 
 translate_datatype(_Stmt, [], []) -> [];
 translate_datatype(Stmt, [<<>> | RestRow], [#stmtCol{} | RestCols]) ->
@@ -549,8 +567,6 @@ fix_row_format([Row | Rest], Columns, ContainRowId) ->
             [{{}, list_to_tuple(fix_format(Row, Columns))} | fix_row_format(Rest, Columns, ContainRowId)]
     end.
 
-
-
 fix_format([], []) -> [];
 fix_format([<<0:8, _/binary>> | RestRow], [#stmtCol{type = 'SQLT_NUM'} | RestCols]) ->
     [null | fix_format(RestRow, RestCols)];
@@ -567,7 +583,7 @@ fix_format([<<0, 0, 0, 0, 0, 0, 0, _/binary>> | RestRow], [#stmtCol{type = 'SQLT
 fix_format([Cell | RestRow], [#stmtCol{} | RestCols]) ->
     [Cell | fix_format(RestRow, RestCols)].
 
--spec run_table_cmd(tuple(), atom(), binary()) -> ok | {error, term()}.
+-spec run_table_cmd(tuple(), atom(), binary()) -> ok | {error, term()}. %% %% !! Fix this to properly use statments.
 run_table_cmd({oci_port, _, _} = _Connection, restore_table, _TableName) -> {error, <<"Command not implemented">>};
 run_table_cmd({oci_port, _, _} = _Connection, snapshot_table, _TableName) -> {error, <<"Command not implemented">>};
 run_table_cmd({oci_port, _, _} = Connection, truncate_table, TableName) ->
@@ -584,4 +600,31 @@ run_table_cmd(Connection, SqlCmd) ->
             ok;
         Error ->
             {error, Error}
+    end.
+
+-spec find_original_field(binary(), list()) -> {binary(), boolean(), list()}.
+find_original_field(Alias, []) -> {Alias, false, []};
+find_original_field(Alias, [<<"*">>]) -> {Alias, false, []};
+find_original_field(Alias, [Field | Fields]) when is_binary(Field) ->
+    compare_alias(Alias, Field, Fields, Field, {Alias, false, Fields});
+find_original_field(Alias, [{as, Name, Field} = CompleteAlias | Fields])
+  when is_binary(Name),
+       is_binary(Field) ->
+    compare_alias(Alias, Field, Fields, CompleteAlias, {Name, false, Fields});
+find_original_field(Alias, [{as, _Expr, Field} = CompleteAlias | Fields])
+  when is_binary(Field) ->
+    compare_alias(Alias, Field, Fields, CompleteAlias, {Alias, true, Fields});
+find_original_field(Alias, [Field | Fields]) ->
+    {ResultName, ReadOnly, RestFields} = find_original_field(Alias, Fields),
+    {ResultName, ReadOnly, [Field | RestFields]}.
+
+-spec compare_alias(binary(), binary(), list(), term(), binary()) -> {binary(), boolean(), list()}.
+compare_alias(Alias, Field, Fields, OrigField, Result) ->
+    LowerAlias = string:to_lower(binary_to_list(Alias)),
+    LowerField = string:to_lower(binary_to_list(Field)),
+    if
+        LowerAlias =:= LowerField -> Result;
+        true ->
+            {ResultName, ReadOnly, RestFields} = find_original_field(Alias, Fields),
+            {ResultName, ReadOnly, [OrigField | RestFields]}
     end.
