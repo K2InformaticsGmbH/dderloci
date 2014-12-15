@@ -10,6 +10,7 @@
 %% API
 -export([
     exec/3,
+    exec/4,
     change_password/4,
     add_fsm/2,
     fetch_recs_async/3,
@@ -60,7 +61,11 @@ stop(_State) ->
 %% Exported functions
 %% ===================================================================
 -spec exec(tuple(), binary(), integer()) -> ok | {ok, pid()} | {error, term()}.
-exec({oci_port, _, _} = Connection, Sql, MaxRowCount) ->
+exec(Connection, Sql, MaxRowCount) ->
+    exec(Connection, Sql, undefined, MaxRowCount).
+
+-spec exec(tuple(), binary(), tuple(), integer()) -> ok | {ok, pid()} | {error, term()}.
+exec({oci_port, _, _} = Connection, Sql, Binds, MaxRowCount) ->
     case sqlparse:parsetree(Sql) of
         {ok,[{{select, SelectSections},_}]} ->
             {TableName, NewSql, RowIdAdded} = inject_rowid(select_type(SelectSections), SelectSections, Sql);
@@ -70,7 +75,8 @@ exec({oci_port, _, _} = Connection, Sql, MaxRowCount) ->
             RowIdAdded = false,
             SelectSections = []
     end,
-    case run_query(Connection, Sql, NewSql, RowIdAdded, SelectSections) of
+    case catch run_query(Connection, Sql, Binds, NewSql, RowIdAdded, SelectSections) of
+        {'EXIT', {Error, _ST}} -> {error, Error};
         {ok, #stmtResult{} = StmtResult, ContainRowId} ->
             LowerSql = string:to_lower(binary_to_list(Sql)),
             case string:str(LowerSql, "rownum") of
@@ -261,33 +267,39 @@ expand_star(Flds, _Forms) -> Flds.
 qualify_star([]) -> [];
 qualify_star([Table | Rest]) -> [qualify_field(Table, "*") | qualify_star(Rest)].
 
-run_query(Connection, Sql, NewSql, RowIdAdded, SelectSections) ->
+run_query(Connection, Sql, Binds, NewSql, RowIdAdded, SelectSections) ->
     %% For now only the first table is counted.
     case Connection:prep_sql(NewSql) of
         {error, {ErrorId,Msg}} ->
             case Connection:prep_sql(Sql) of
                 {error, {ErrorId,Msg}} ->
-                    {error, {ErrorId,Msg}};
+                    error({ErrorId,Msg});
                 Statement ->
-                    result_exec_stmt(Statement:exec_stmt()
-                                    ,Statement
-                                    ,Sql
-                                    ,NewSql
-                                    ,RowIdAdded
-                                    ,Connection
-                                    ,SelectSections)
+                    StmtExecResult = case Binds of
+                                         undefined -> Statement:exec_stmt();
+                                         {BindsMeta, BindVal} ->
+                                             case Statement:bind_vars(BindsMeta) of
+                                                 ok -> Statement:exec_stmt([list_to_tuple(BindVal)]);
+                                                 Error -> error(Error)
+                                             end
+                                     end,
+                    result_exec_stmt(StmtExecResult,Statement,Sql,Binds,NewSql,RowIdAdded,
+                                     Connection,SelectSections)
             end;
         Statement ->
-            result_exec_stmt(Statement:exec_stmt()
-                            ,Statement
-                            ,Sql
-                            ,NewSql
-                            ,RowIdAdded
-                            ,Connection
-                            ,SelectSections)
+            StmtExecResult = case Binds of
+                                 undefined -> Statement:exec_stmt();
+                                 {BindsMeta, BindVal} ->
+                                     case Statement:bind_vars(BindsMeta) of
+                                         ok -> Statement:exec_stmt([list_to_tuple(BindVal)]);
+                                         Error -> error(Error)
+                                     end
+                             end,
+            result_exec_stmt(StmtExecResult,Statement,Sql,Binds,NewSql,RowIdAdded,Connection,
+                             SelectSections)
     end.
 
-result_exec_stmt({cols, Clms}, Statement, _Sql, NewSql, RowIdAdded, _Connection, SelectSections) ->
+result_exec_stmt({cols, Clms}, Statement, _Sql, _Binds, NewSql, RowIdAdded, _Connection, SelectSections) ->
     if
         RowIdAdded -> % ROWID is hidden from columns
             [_|ColumnsR] = lists:reverse(Clms),
@@ -314,35 +326,39 @@ result_exec_stmt({cols, Clms}, Statement, _Sql, NewSql, RowIdAdded, _Connection,
                     , sortFun  = SortFun
                     , sortSpec = []}
      , RowIdAdded};
-result_exec_stmt({rowids, _}, Statement, _Sql, _NewSql, _RowIdAdded, _Connection, _SelectSections) ->
+result_exec_stmt({rowids, _}, Statement, _Sql, _Binds, _NewSql, _RowIdAdded, _Connection, _SelectSections) ->
     Statement:close(),
     ok;
-result_exec_stmt({executed, _}, Statement, _Sql, _NewSql, _RowIdAdded, _Connection, _SelectSections) ->
+result_exec_stmt({executed, _}, Statement, _Sql, _Binds, _NewSql, _RowIdAdded, _Connection, _SelectSections) ->
     Statement:close(),
     ok;
-result_exec_stmt(_RowIdError, Statement, Sql, _NewSql, _RowIdAdded, Connection, SelectSections) ->
+result_exec_stmt(_RowIdError, Statement, Sql, Binds, _NewSql, _RowIdAdded, Connection, SelectSections) ->
     Statement:close(),
     case Connection:prep_sql(Sql) of
         {error, {ErrorId,Msg}} ->
-            {error, {ErrorId,Msg}};
+            error({ErrorId,Msg});
         Statement1 ->
-            case Statement1:exec_stmt() of
+            StmtExecResult = case Binds of
+                                 undefined -> Statement1:exec_stmt();
+                                 {BindsMeta, BindVal} ->
+                                     case Statement1:bind_vars(BindsMeta) of
+                                         ok -> Statement1:exec_stmt([list_to_tuple(BindVal)]);
+                                         Error1 -> error(Error1)
+                                     end
+                             end,
+            case StmtExecResult of
                 {cols, Clms} ->
                     Fields = proplists:get_value(fields, SelectSections),
                     NewClms = cols_to_rec(Clms, Fields),
                     SortFun = build_sort_fun(Sql, NewClms),
-                    {ok
-                     , #stmtResult{ stmtCols = NewClms
-                                    , rowFun   = fun({{}, Row}) ->
+                    {ok, #stmtResult{ stmtCols = NewClms, stmtRef  = Statement1, sortFun  = SortFun,
+                                      rowFun   = fun({{}, Row}) ->
                                                          translate_datatype(Statement, tuple_to_list(Row), NewClms)
-                                                 end
-                                    , stmtRef  = Statement1
-                                    , sortFun  = SortFun
-                                    , sortSpec = []}
+                                                 end, sortSpec = []}
                      , false};
                 Error ->
                     Statement1:close(),
-                    Error
+                    error(Error)
             end
     end.
 
