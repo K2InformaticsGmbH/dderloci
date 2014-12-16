@@ -3,6 +3,7 @@
 -export([oranumber_decode/1, oranumber_encode/1, ora_to_dderltime/1,
          dderltime_to_ora/1, apply_scale/2, clean_dynamic_prec/1, to_ora/2]).
 
+-spec to_ora(atom(), any()) -> any().
 to_ora('SQLT_INT', <<>>) -> <<>>;
 to_ora('SQLT_INT', V) -> binary_to_integer(V);
 to_ora(T, V) when T=='SQLT_FLT'; T=='SQLT_INT'; T=='SQLT_UIN'; T=='SQLT_VNU';
