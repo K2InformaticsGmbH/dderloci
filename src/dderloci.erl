@@ -16,7 +16,10 @@
     fetch_close/1,
     filter_and_sort/6,
     close/1,
-    run_table_cmd/3
+    run_table_cmd/3,
+    cols_to_rec/2,
+    fix_row_format/3,
+    create_rowfun/3
 ]).
 
 %% gen_server callbacks
@@ -343,6 +346,18 @@ result_exec_stmt(_RowIdError, Statement, Sql, _NewSql, _RowIdAdded, Connection, 
                 Error ->
                     Statement1:close(),
                     Error
+            end
+    end.
+
+-spec create_rowfun(boolean(), list(), term()) -> fun().
+create_rowfun(RowIdAdded, Clms, Stmt) ->
+    fun({{}, Row}) ->
+            if
+                RowIdAdded ->
+                    [_|NewRowR] = lists:reverse(tuple_to_list(Row)),
+                    translate_datatype(Stmt, lists:reverse(NewRowR), Clms);
+                true ->
+                    translate_datatype(Stmt, tuple_to_list(Row), Clms)
             end
     end.
 
