@@ -121,10 +121,12 @@ remove_trailing_zeros(OrigBin) ->
 ora_to_dderltime(OraTime) ->
     imem_datatype:datetime_to_io(oci_util:from_dts(OraTime)).
 
--spec dderltime_to_ora(binary()) -> binary().
+-spec dderltime_to_ora(binary() | tuple()) -> binary().
 dderltime_to_ora(<<>>) -> <<>>;
-dderltime_to_ora(DDerlTime) ->
-    oci_util:to_dts(imem_datatype:io_to_datetime(DDerlTime)).
+dderltime_to_ora(DDerlTime) when is_binary(DDerlTime) ->
+    oci_util:to_dts(imem_datatype:io_to_datetime(DDerlTime));
+dderltime_to_ora(DateTime) when is_tuple(DateTime) ->
+    oci_util:to_dts(DateTime).
 
 -spec apply_scale(binary(), integer()) -> binary().
 apply_scale(Value, Scale) ->
