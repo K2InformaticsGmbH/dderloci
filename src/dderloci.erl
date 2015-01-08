@@ -310,7 +310,7 @@ result_exec_stmt({cols, Clms}, Statement, _Sql, _Binds, NewSql, RowIdAdded, _Con
         true ->
             Columns = Clms
     end,
-    Fields = proplists:get_value(fields, SelectSections),
+    Fields = proplists:get_value(fields, SelectSections, []),
     NewClms = cols_to_rec(Columns, Fields),
     SortFun = build_sort_fun(NewSql, NewClms),
     {ok
@@ -351,7 +351,7 @@ result_exec_stmt(_RowIdError, Statement, Sql, Binds, _NewSql, _RowIdAdded, Conne
                              end,
             case StmtExecResult of
                 {cols, Clms} ->
-                    Fields = proplists:get_value(fields, SelectSections),
+                    Fields = proplists:get_value(fields, SelectSections, []),
                     NewClms = cols_to_rec(Clms, Fields),
                     SortFun = build_sort_fun(Sql, NewClms),
                     {ok, #stmtResult{ stmtCols = NewClms, stmtRef  = Statement1, sortFun  = SortFun,
