@@ -3,7 +3,7 @@
 {application, dderloci,
  [
   {description, "Interfacing dderl with erloci"},
-  {vsn, "0.0.3"},
+  {vsn, "0.0.4"},
   {registered, []},
   {applications, [
                   kernel,
