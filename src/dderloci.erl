@@ -19,6 +19,7 @@
     close/1,
     run_table_cmd/3,
     cols_to_rec/2,
+    get_alias/1,
     fix_row_format/3,
     create_rowfun/3
 ]).
@@ -533,6 +534,11 @@ cols_to_rec([{Alias,Type,Len,Prec,_Scale}|Rest], Fields) ->
              , len = Len
              , prec = Prec
              , readonly = ReadOnly} | cols_to_rec(Rest, NewFields)].
+
+-spec get_alias([#stmtCol{}]) -> [binary()].
+get_alias([]) -> [];
+get_alias([#stmtCol{alias = A} | Rest]) ->
+    [A | get_alias(Rest)].
 
 translate_datatype(_Stmt, [], []) -> [];
 translate_datatype(Stmt, [<<>> | RestRow], [#stmtCol{} | RestCols]) ->
