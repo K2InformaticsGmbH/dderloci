@@ -216,13 +216,26 @@ code_change(_OldVsn, State, _Extra) ->
 %% Internal functions %%%
 -spec select_type(list()) -> atom().
 select_type(Args) ->
-    case proplists:get_value(opt, Args) of
-        <<>> ->
-            case proplists:get_value('group by', Args) of
-                [] -> select;
-                _ -> agregation
-            end;
-        _ -> agregation
+    try
+        case proplists:get_value(opt, Args) of
+            <<>> -> select;
+            _ -> throw({error,agregation})
+        end,
+        case proplists:get_value('group by', Args) of
+            [] -> select;
+            _ -> throw({error,agregation})
+        end,
+        case proplists:get_value(from, Args) of
+            FromTargets when length(FromTargets) > 0 ->
+                _ = [if not is_binary(FromTarget) ->
+                            throw({error,agregation});
+                        true -> select
+                    end || FromTarget <- FromTargets],
+                select;
+            _ -> throw({error,agregation})
+        end
+    catch
+        throw:{error,agregation} -> agregation
     end.
 
 -spec inject_rowid(atom(), list(), binary()) -> {binary(), binary()}.
@@ -252,9 +265,9 @@ qualify_field(Table, Field) -> iolist_to_binary(add_field(Table, Field)).
 -spec add_field(tuple() | binary(), binary() | list()) -> iolist().
 add_field({as, _, Alias}, Field) -> [Alias, ".", Field];
 add_field({{as, _, Alias}, _}, Field) -> [Alias, ".", Field];
-add_field({Tab, _}, Field) ->
+add_field({Tab, _}, Field) when is_binary(Tab) ->
     include_at(binary:split(Tab, <<"@">>), Field);
-add_field(Tab, Field) ->
+add_field(Tab, Field) when is_binary(Tab) ->
     include_at(binary:split(Tab, <<"@">>), Field).
 
 -spec include_at(list(), binary() | list()) -> iolist().
