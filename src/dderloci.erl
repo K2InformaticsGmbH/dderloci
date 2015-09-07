@@ -672,8 +672,10 @@ find_original_field(Alias, [Field | Fields]) ->
 compare_alias(Alias, Field, Fields, OrigField, Result) ->
     LowerAlias = string:to_lower(binary_to_list(Alias)),
     LowerField = string:to_lower(binary_to_list(Field)),
+    AliasQuoted = [$" | LowerAlias] ++ [$"],
     if
         LowerAlias =:= LowerField -> Result;
+        AliasQuoted =:= LowerField -> Result;
         true ->
             {ResultName, ReadOnly, RestFields} = find_original_field(Alias, Fields),
             {ResultName, ReadOnly, [OrigField | RestFields]}
