@@ -79,9 +79,9 @@ handle_cast(_Ignored, State) ->
 handle_info(_Info, State) ->
 	{noreply, State}.
 
-%% TODO: Check if some cleanup is needed.
-terminate(_Reason, #stmt{}) ->
-	ok.
+terminate(_Reason, #stmt{del_stmt = DelStmt, upd_stmt = UpdStmt, ins_stmt = InsStmt}) ->
+    %% Delete is not a list since it is always only one.
+    close_stmts([Stmt || Stmt <- lists:flatten([DelStmt, UpdStmt, InsStmt]), Stmt =/= undefined]).
 
 code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
@@ -462,7 +462,8 @@ get_non_empty_cols([<<>> | RestValues], Pos) ->
 get_non_empty_cols([_Value | RestValues], Pos) ->
     [Pos | get_non_empty_cols(RestValues, Pos + 1)].
 
--spec close_stmts(list()) -> ok.
+-spec close_stmts(list() | undefined) -> ok.
+close_stmts(undefined) -> ok;
 close_stmts([]) -> ok;
 close_stmts([{del, Stmt} | RestStmts]) ->
     Stmt:close(),
@@ -471,6 +472,9 @@ close_stmts([{upd, Stmts} | RestStmts]) ->
     [Stmt:close() || Stmt <- Stmts],
     close_stmts(RestStmts);
 close_stmts([{ins, Stmt} | RestStmts]) ->
+    Stmt:close(),
+    close_stmts(RestStmts);
+close_stmts([Stmt | RestStmts]) ->
     Stmt:close(),
     close_stmts(RestStmts).
 
