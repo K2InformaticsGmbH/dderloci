@@ -217,7 +217,7 @@ code_change(_OldVsn, State, _Extra) ->
 -spec select_type(list()) -> atom().
 select_type(Args) ->
     try
-        case proplists:get_value(opt, Args) of
+        case proplists:get_value(opt, Args, <<>>) of
             <<>> -> select;
             _ -> throw({error,agregation})
         end,
