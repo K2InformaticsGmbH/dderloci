@@ -393,7 +393,8 @@ create_rowfun(RowIdAdded, Clms, Stmt) ->
 
 can_expand([<<"*">>], _, _) -> true;
 can_expand(SelectFields, [TableName], AllFields) when is_binary(TableName) ->
-    LowerSelectFields = [string:to_lower(binary_to_list(X)) || X <- SelectFields, is_binary(X)],
+    LowerSelectFields = [string:to_lower(binary_to_list(sqlparse:pt_to_string(X)))
+                         || X <- SelectFields, is_binary(X) orelse element(1, X) =:= 'fun'],
     LowerAllFields = [string:to_lower(binary_to_list(X)) || X <- AllFields],
     length(LowerSelectFields) =:= length(LowerAllFields) andalso [] =:= (LowerSelectFields -- LowerAllFields);
 can_expand(_, _, _) -> false.
