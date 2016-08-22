@@ -25,10 +25,10 @@ oranumber_decode(<<Length:8, 1:1, OraExp:7, Rest/binary>>) -> % positive numbers
     oraexp_to_imem_prec(Mantissa, Exponent, LengthMant);
 oranumber_decode(<<Length:8, 0:1, OraExp:7, Rest/binary>>) -> % negative numbers
     Exponent = 62 - OraExp,
-    MLength = Length - 2,
-    <<OraMantissa:MLength/binary, 102, _/binary>> = Rest,
+    MLength = Length - 1,
+    <<OraMantissa:MLength/binary, _/binary>> = Rest,
     ListOraMant = binary_to_list(OraMantissa),
-    ListMantissa = lists:flatten([io_lib:format("~2.10.0B", [101-DD]) || DD <- ListOraMant]),
+    ListMantissa = lists:flatten([io_lib:format("~2.10.0B", [101-DD]) || DD <- ListOraMant, DD =/= 102]),
     Mantissa = -1 * list_to_integer(ListMantissa),
     LengthMant = length(ListMantissa),
     oraexp_to_imem_prec(Mantissa, Exponent, LengthMant);
